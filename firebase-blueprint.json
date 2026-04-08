@@ -1,0 +1,231 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the KisanMitra platform (Farmer or Buyer).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "The unique Firebase Auth UID of the user."
+        },
+        "name": {
+          "type": "string",
+          "description": "The display name of the user."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "The email address of the user."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["farmer", "buyer"],
+          "description": "The role of the user on the platform."
+        },
+        "language": {
+          "type": "string",
+          "enum": ["en", "hi"],
+          "description": "The preferred language of the user."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The timestamp when the user account was created."
+        }
+      },
+      "required": ["uid", "name", "email", "role", "language", "createdAt"]
+    },
+    "FarmProfile": {
+      "title": "Farm Profile",
+      "description": "The farm details for a user.",
+      "type": "object",
+      "properties": {
+        "crop": { "type": "string" },
+        "acres": { "type": "number" },
+        "soil": { "type": "string" },
+        "district": { "type": "string" },
+        "sowingDate": { "type": "string", "format": "date" }
+      },
+      "required": ["crop", "acres", "soil", "district", "sowingDate"]
+    },
+    "AdvisoryHistory": {
+      "title": "Advisory History",
+      "description": "A history of advisory conversations.",
+      "type": "object",
+      "properties": {
+        "question": { "type": "string" },
+        "response": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["question", "response", "timestamp"]
+    },
+    "CropReport": {
+      "title": "Crop Report",
+      "description": "A diagnosis report for a crop.",
+      "type": "object",
+      "properties": {
+        "cropType": { "type": "string" },
+        "diseaseName": { "type": "string" },
+        "confidence": { "type": "number" },
+        "severity": { "type": "string" },
+        "cause": { "type": "string" },
+        "treatment": { "type": "array", "items": { "type": "string" } },
+        "prevention": { "type": "array", "items": { "type": "string" } },
+        "isHealthy": { "type": "boolean" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["cropType", "diseaseName", "confidence", "severity", "cause", "treatment", "prevention", "isHealthy", "timestamp"]
+    },
+    "Listing": {
+      "title": "Marketplace Listing",
+      "description": "A crop listing created by a farmer.",
+      "type": "object",
+      "properties": {
+        "farmerId": { "type": "string" },
+        "farmerName": { "type": "string" },
+        "crop": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "grade": { "type": "string" },
+        "price": { "type": "number" },
+        "harvestDate": { "type": "string", "format": "date" },
+        "district": { "type": "string" },
+        "description": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "isBidding": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["active", "sold"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "highestBid": { "type": "number" }
+      },
+      "required": ["farmerId", "farmerName", "crop", "quantity", "unit", "grade", "price", "harvestDate", "district", "description", "isBidding", "status", "createdAt"]
+    },
+    "Bid": {
+      "title": "Marketplace Bid",
+      "description": "A bid placed by a buyer on a listing.",
+      "type": "object",
+      "properties": {
+        "listingId": { "type": "string" },
+        "buyerId": { "type": "string" },
+        "buyerName": { "type": "string" },
+        "amount": { "type": "number" },
+        "quantity": { "type": "number" },
+        "message": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["listingId", "buyerId", "buyerName", "amount", "quantity", "message", "status", "createdAt"]
+    },
+    "Scheme": {
+      "title": "Government Scheme",
+      "description": "A government scheme for farmers.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "benefit": { "type": "string" },
+        "details": { "type": "string" },
+        "link": { "type": "string" }
+      },
+      "required": ["name", "description", "category", "benefit", "details", "link"]
+    },
+    "EquipmentBooking": {
+      "title": "Equipment Booking",
+      "description": "A booking for agricultural equipment.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "equipmentId": { "type": "string" },
+        "equipmentName": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "durationDays": { "type": "number" },
+        "location": { "type": "string" },
+        "contact": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "completed", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "equipmentId", "equipmentName", "startDate", "durationDays", "location", "contact", "status", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "A user notification.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "message", "type", "read", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "Stores user profiles."
+    },
+    "/users/{userId}/settings/language": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "lang": { "type": "string", "enum": ["en", "hi"] }
+        },
+        "required": ["lang"]
+      },
+      "description": "Stores user language preference."
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": {
+        "$ref": "#/entities/Notification"
+      },
+      "description": "Stores user notifications."
+    },
+    "/users/{userId}/farmProfile/profile": {
+      "schema": {
+        "$ref": "#/entities/FarmProfile"
+      },
+      "description": "Stores the user's farm profile."
+    },
+    "/users/{userId}/advisoryHistory/{historyId}": {
+      "schema": {
+        "$ref": "#/entities/AdvisoryHistory"
+      },
+      "description": "Stores the user's advisory history."
+    },
+    "/users/{userId}/cropReports/{reportId}": {
+      "schema": {
+        "$ref": "#/entities/CropReport"
+      },
+      "description": "Stores the user's crop diagnosis reports."
+    },
+    "/listings/{listingId}": {
+      "schema": {
+        "$ref": "#/entities/Listing"
+      },
+      "description": "Stores marketplace listings."
+    },
+    "/bids/{bidId}": {
+      "schema": {
+        "$ref": "#/entities/Bid"
+      },
+      "description": "Stores marketplace bids."
+    },
+    "/schemes/{schemeId}": {
+      "schema": {
+        "$ref": "#/entities/Scheme"
+      },
+      "description": "Stores government schemes."
+    },
+    "/equipment_bookings/{bookingId}": {
+      "schema": {
+        "$ref": "#/entities/EquipmentBooking"
+      },
+      "description": "Stores equipment bookings."
+    }
+  }
+}

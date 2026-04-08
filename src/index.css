@@ -1,0 +1,167 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-hi: "Noto Sans Devanagari", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+
+  --color-forest-50: #D1FAE5;
+  --color-forest-100: #D1FAE5;
+  --color-forest-200: #a7f3d0;
+  --color-forest-500: #059669;
+  --color-forest-600: #047857;
+  --color-forest-700: #065f46;
+  --color-forest-800: #064e3b;
+  --color-forest-900: #1B4332;
+
+  --color-gold-400: #fbbf24;
+  --color-gold-500: #F59E0B;
+  --color-gold-600: #d97706;
+
+  --color-text-primary: #111827;
+  --color-text-secondary: #6B7280;
+  --color-page-bg: #F9FAFB;
+  --color-card: #FFFFFF;
+  --color-error: #EF4444;
+  --color-success: #10B981;
+
+  --color-bg-light: #F9FAFB;
+}
+
+@layer base {
+  html {
+    overflow-x: hidden;
+  }
+  body {
+    @apply bg-[#F9FAFB] text-[#111827] font-sans antialiased overflow-x-hidden;
+  }
+  .font-devanagari {
+    font-family: var(--font-hi);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+/* Design system: cards */
+.ds-card {
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  background: #ffffff;
+  padding: 24px;
+}
+
+@media (max-width: 767px) {
+  .ds-card {
+    padding: 16px;
+  }
+}
+
+/* Buttons */
+.btn-primary {
+  @apply bg-[#1B4332] text-white font-semibold rounded-full px-6 py-3 min-h-[44px] inline-flex items-center justify-center;
+}
+.btn-secondary {
+  @apply bg-[#F59E0B] text-[#1B4332] font-semibold rounded-full px-6 py-3 min-h-[44px] inline-flex items-center justify-center;
+}
+.btn-ghost {
+  @apply bg-transparent border-[1.5px] border-[#1B4332] text-[#1B4332] font-semibold rounded-full px-6 py-3 min-h-[44px] inline-flex items-center justify-center;
+}
+
+/* Typography scale (desktop; mobile overrides in components) */
+.ds-page-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+.ds-section-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.ds-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.ds-body {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--color-text-primary);
+}
+.ds-caption {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 767px) {
+  .ds-page-title {
+    font-size: 22px;
+  }
+  .ds-card-title {
+    font-size: 15px;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-white/80 backdrop-blur-md border-b border-white/20;
+  }
+  .glass-card {
+    @apply bg-white/90 backdrop-blur-sm border border-white/40 shadow-[0_4px_24px_rgba(0,0,0,0.08)];
+  }
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes countUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fade-in { 
+    animation: fadeIn 0.3s ease-in-out; 
+  }
+  .animate-slide-in { 
+    animation: slideIn 0.3s ease-in-out; 
+  }
+  .animate-count-up { 
+    animation: countUp 0.5s ease-out; 
+  }
+  
+  @keyframes ticker {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+  .ticker-scroll {
+    animation: ticker 30s linear infinite;
+  }
+  .ticker-scroll:hover {
+    animation-play-state: paused;
+  }
+}
