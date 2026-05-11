@@ -8,8 +8,9 @@ import { formatRupee } from '../lib/formatters';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { db, isMockConfig } from '../lib/firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs } from '../lib/firebase';
 import { FarmProfileData } from '../components/FarmFormModal';
+import { geminiClient } from '../lib/geminiClient';
 
 const CROP_TYPES = ['Wheat', 'Rice', 'Potato', 'Tomato', 'Sugarcane', 'Maize'];
 const CROP_NAMES_HI: Record<string, string> = {
@@ -109,20 +110,14 @@ export default function Insights() {
     setPredicting(true);
     setPredictError(null);
     try {
-      const res = await fetch('/api/price-predict', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          crop: selectedCrop,
-          currentPrice: currentPrice,
-          month: new Date().toLocaleString('default', { month: 'long' }),
-          language,
-          state: farmerLoc.state,
-          district: farmerLoc.district,
-        })
+      const data = await geminiClient.predictPrice({
+        crop: selectedCrop,
+        currentPrice: currentPrice,
+        month: new Date().toLocaleString('default', { month: 'long' }),
+        language,
+        state: farmerLoc.state,
+        district: farmerLoc.district,
       });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.message || 'Failed to predict');
       setPrediction(data);
     } catch (err) {
       console.error(err);

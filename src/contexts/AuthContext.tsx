@@ -1,14 +1,19 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { auth, db, doc, getDoc } from '../lib/firebase';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { auth, db, doc, getDoc, onAuthStateChanged, User } from '../lib/firebase';
 
 interface UserData {
   uid: string;
   name: string;
   email: string;
-  role: 'farmer' | 'buyer';
+  role: 'farmer' | 'buyer' | 'seller';
   language: 'en' | 'hi';
   createdAt: string;
+  phone?: string;
+  address?: string;
+  village?: string;
+  experience?: number;
+  expertise?: string[];
+  aadhaarLast4?: string;
 }
 
 interface AuthContextType {

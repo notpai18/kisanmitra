@@ -3,8 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, Sprout } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
-import { db, isMockConfig } from '../lib/firebase';
-import { doc, addDoc, updateDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { db, isMockConfig, doc, addDoc, updateDoc, collection, serverTimestamp } from '../lib/firebase';
 import toast from 'react-hot-toast';
 import { UP_DISTRICTS, UP_ONLY_STATE } from '../data/upDistricts';
 
@@ -43,6 +42,10 @@ export interface FarmProfileData {
   season: string;
   sowingDate?: string;
   notes?: string;
+  waterSource?: string;
+  machinery?: string[];
+  livestock?: string[];
+  landType?: 'Owned' | 'Leased';
 }
 
 interface FarmFormModalProps {
@@ -63,6 +66,10 @@ const emptyFarm: FarmProfileData = {
   season: 'Kharif',
   sowingDate: new Date().toISOString().split('T')[0],
   notes: '',
+  waterSource: 'Borewell',
+  machinery: [],
+  livestock: [],
+  landType: 'Owned',
 };
 
 export default function FarmFormModal({ isOpen, onClose, onSuccess, initialData }: FarmFormModalProps) {
@@ -100,18 +107,25 @@ export default function FarmFormModal({ isOpen, onClose, onSuccess, initialData 
       return;
     }
 
-    const dataToSave = {
+    const fullData = {
       ...formData,
       state: UP_ONLY_STATE,
       district: selectedDistrict,
       updatedAt: serverTimestamp(),
     };
 
+    // Destructure to remove 'id' and other internal fields from Firestore data
+    const { id, ...dataToSave } = fullData as any;
+
     if (!user || isMockConfig) {
       onSuccess();
       onClose();
       return;
     }
+
+    console.log('Attempting save. User UID:', user.uid);
+    const path = initialData?.id ? `users/${user.uid}/farms/${initialData.id}` : `users/${user.uid}/farms`;
+    console.log('Target path:', path);
 
     setSaving(true);
     try {
@@ -127,9 +141,11 @@ export default function FarmFormModal({ isOpen, onClose, onSuccess, initialData 
       }
       onSuccess();
       onClose();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Farm form save error:', err);
-      alert(language === 'hi' ? 'सेव करने में त्रुटि — पुनः प्रयास करें' : 'Save failed — please try again');
+      console.error('Error code:', err?.code);
+      const msg = err?.message || 'Unknown error';
+      alert(language === 'hi' ? `सेव करने में त्रुटि: ${msg}` : `Save failed: ${msg}`);
     } finally {
       setSaving(false);
     }
@@ -334,6 +350,51 @@ export default function FarmFormModal({ isOpen, onClose, onSuccess, initialData 
                       ))}
                     </select>
                   </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{language === 'en' ? 'Water Source' : 'जल स्रोत'}</label>
+                    <input
+                      type="text"
+                      placeholder={language === 'en' ? 'e.g. Borewell, River' : 'जैसे नलकूप, नदी'}
+                      value={formData.waterSource || ''}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, waterSource: e.target.value }))}
+                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-forest-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{language === 'en' ? 'Land Type' : 'भूमि का प्रकार'}</label>
+                    <select
+                      value={formData.landType || 'Owned'}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, landType: e.target.value as any }))}
+                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-forest-500 outline-none font-devanagari"
+                    >
+                      <option value="Owned">{language === 'en' ? 'Owned' : 'स्वयं की'}</option>
+                      <option value="Leased">{language === 'en' ? 'Leased' : 'पट्टे पर'}</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{language === 'en' ? 'Machinery Owned' : 'स्वामित्व वाली मशीनरी'}</label>
+                  <input
+                    type="text"
+                    placeholder={language === 'en' ? 'e.g. Tractor, Harvester' : 'जैसे ट्रैक्टर, हार्वेस्टर'}
+                    value={formData.machinery?.join(', ') || ''}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, machinery: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }))}
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-forest-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{language === 'en' ? 'Livestock' : 'पशुधन'}</label>
+                  <input
+                    type="text"
+                    placeholder={language === 'en' ? 'e.g. 2 Cows, 1 Buffalo' : 'जैसे 2 गाय, 1 भैंस'}
+                    value={formData.livestock?.join(', ') || ''}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, livestock: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }))}
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-forest-500 outline-none"
+                  />
                 </div>
 
                 <div>

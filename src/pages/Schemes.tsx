@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useCart } from '../contexts/CartContext';
 import { db, doc, getDoc, isMockConfig } from '../lib/firebase';
-import { collection, getDocs, addDoc, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, addDoc, query, where } from '../lib/firebase';
 import LocationSelector from '../components/LocationSelector';
 import { Landmark, Search, Filter, Sparkles, ChevronRight, CheckCircle2, XCircle, Calendar, MapPin, Phone, ShoppingCart, Tractor } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { formatRupee } from '../lib/formatters';
 import { UI } from '../constants/translations';
+import { geminiClient } from '../lib/geminiClient';
 
 const SCHEMES_DATA = [
   {
@@ -245,31 +246,44 @@ export default function Schemes() {
   const handleFindSchemes = async () => {
     if (!user) return;
     setFindingSchemes(true);
+    setAiRecommendations([]);
     try {
-      const profileDoc = await getDoc(doc(db, `users/${user.uid}/farmProfile/profile`));
-      const base = profileDoc.exists() ? profileDoc.data() : { acres: 2, crop: 'Wheat', soil: 'Loam' };
+      // Fetch all farms for this user
       const farmsSnap = await getDocs(collection(db, `users/${user.uid}/farms`));
-      const firstFarm = farmsSnap.docs[0]?.data() as { area?: number; crops?: string[]; crop?: string; soil?: string; state?: string; district?: string } | undefined;
-      const profile = {
-        ...base,
-        acres: firstFarm?.area ?? (base as { acres?: number }).acres ?? 2,
-        crop: firstFarm?.crops?.[0] ?? firstFarm?.crop ?? (base as { crop?: string }).crop ?? 'Wheat',
-        soil: firstFarm?.soil ?? (base as { soil?: string }).soil ?? 'Loam',
-        state: firstFarm?.state ?? (base as { state?: string }).state ?? '',
-        district: firstFarm?.district ?? (base as { district?: string }).district ?? '',
-      };
+      
+      let profile;
+      if (!farmsSnap.empty) {
+        // Use the first farm as the primary profile for matching
+        const farm = farmsSnap.docs[0].data() as any;
+        profile = {
+          acres: farm.area || 2,
+          crop: (farm.crops && farm.crops.length > 0 ? farm.crops[0] : farm.crop) || 'Wheat',
+          soil: farm.soil || 'Alluvial',
+          state: farm.state || 'Uttar Pradesh',
+          district: farm.district || '',
+          season: farm.season || 'Kharif'
+        };
+      } else {
+        // Fallback to a default profile if no farms exist
+        profile = {
+          acres: 2,
+          crop: 'Wheat',
+          soil: 'Alluvial',
+          state: 'Uttar Pradesh',
+          district: 'Varanasi',
+          season: 'Rabi'
+        };
+      }
 
-      const res = await fetch('/api/scheme-finder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile, schemes, language })
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.message || data.error || 'Failed to find schemes');
-      setAiRecommendations(Array.isArray(data) ? data : []);
+      const data = await geminiClient.findSchemes({ profile, schemes, language });
+      if (Array.isArray(data)) {
+        setAiRecommendations(data);
+      } else {
+        throw new Error("Invalid AI response format");
+      }
     } catch (error) {
-      console.error(error);
-      toast.error(UI.aiUnavailable);
+      console.error("Error finding schemes:", error);
+      toast.error(language === 'hi' ? 'एआई सलाह अभी उपलब्ध नहीं है।' : 'AI advisory is temporarily unavailable.');
     } finally {
       setFindingSchemes(false);
     }
@@ -439,7 +453,7 @@ export default function Schemes() {
           ) : (
             <>
           {filteredSchemes.map((scheme) => {
-            const href = schemeUrl(scheme.name);
+            const href = scheme.link || schemeUrl(scheme.name);
             return (
             <div key={scheme.id ?? scheme.name} className="ds-card flex flex-col md:flex-row gap-4 items-start md:items-center hover:border-[#1B4332]/20 transition-colors border border-gray-100">
               <div className={clsx(

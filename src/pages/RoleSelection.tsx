@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tractor, Store, ArrowRight, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
-import { auth, db, googleProvider, signInWithPopup, doc, setDoc, isMockConfig } from '../lib/firebase';
+import { auth, db, googleProvider, signInWithPopup, doc, setDoc, getDoc, isMockConfig } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import toast from 'react-hot-toast';
@@ -12,8 +12,15 @@ export default function RoleSelection() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const navigate = useNavigate();
-  const { setUserData } = useAuth();
+  const { user, userData, setUserData } = useAuth();
   const { language, setLanguage, t } = useLanguage();
+
+  // Redirect if user already has a role
+  useEffect(() => {
+    if (user && userData) {
+      navigate('/dashboard');
+    }
+  }, [user, userData, navigate]);
 
   const handleGoogleSignIn = async () => {
     if (!selectedRole) return;
@@ -41,17 +48,36 @@ export default function RoleSelection() {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
       
-      const userData = {
-        uid: user.uid,
-        name: user.displayName || 'User',
-        email: user.email || '',
-        role: selectedRole,
-        language: language,
-        createdAt: new Date().toISOString(),
-      };
+      // Check if user already exists in Firestore
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userDocRef);
+      
+      let finalUserData;
 
-      await setDoc(doc(db, 'users', user.uid), userData, { merge: true });
-      setUserData(userData);
+      if (userDoc.exists()) {
+        const existingData = userDoc.data();
+        finalUserData = {
+          ...existingData,
+          role: selectedRole, // Allow changing role if they came back to this page
+          language: language,
+        };
+        // When updating, don't send createdAt if the rule prohibits it or if we want to preserve it
+        // The rule says: request.resource.data.createdAt == resource.data.createdAt
+        // So we MUST send the same createdAt.
+        await setDoc(userDocRef, finalUserData, { merge: true });
+      } else {
+        finalUserData = {
+          uid: user.uid,
+          name: user.displayName || 'User',
+          email: user.email || '',
+          role: selectedRole,
+          language: language,
+          createdAt: new Date().toISOString(),
+        };
+        await setDoc(userDocRef, finalUserData);
+      }
+
+      setUserData(finalUserData as any);
       navigate('/dashboard');
     } catch (error: unknown) {
       console.error('Error signing in with Google:', error);

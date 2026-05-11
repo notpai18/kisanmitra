@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { db, doc, isMockConfig } from '../lib/firebase';
-import { collection, addDoc, query, orderBy, onSnapshot, getDocs } from 'firebase/firestore';
+import { collection, addDoc, query, orderBy, onSnapshot, getDocs } from '../lib/firebase';
 import { CloudRain, Wind, Droplets, ThermometerSun, Send, Leaf, AlertTriangle, CheckCircle2, Bell, Sprout, Mic, MicOff, MapPin, Map, Calendar, Award } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
@@ -12,6 +12,7 @@ import FarmFormModal, { FarmProfileData } from '../components/FarmFormModal';
 import { formatLocationLine } from '../utils/formatLocation';
 import { resolveWeatherCoords } from '../utils/weatherLocation';
 import SoilMoistureCard from '../components/SoilMoistureCard';
+import { geminiClient } from '../lib/geminiClient';
 
 function primaryCrop(f: FarmProfileData): string {
   return (f.crops && f.crops.length > 0 ? f.crops[0] : (f as { crop?: string }).crop) || '';
@@ -102,7 +103,29 @@ export default function Advisory() {
   };
 
   const loadFarms = async () => {
-    if (!user || isMockConfig) return;
+    if (!user) return;
+    if (isMockConfig) {
+      const loaded = [
+        {
+          id: 'mock-farm-1',
+          name: 'Green Valley Farm',
+          crops: ['Wheat'],
+          area: 5,
+          soil: 'Alluvial',
+          state: 'Uttar Pradesh',
+          district: 'Varanasi',
+          irrigation: 'Tubewell',
+          season: 'Rabi',
+          createdAt: new Date().toISOString()
+        }
+      ];
+      setFarms(loaded);
+      if (loaded.length > 0 && !selectedFarm) {
+        setSelectedFarm(loaded[0]);
+      }
+      setFarmsLoading(false);
+      return;
+    }
     setFarmsLoading(true);
     try {
       const snapshot = await getDocs(collection(db, 'users', user.uid, 'farms'));
@@ -126,20 +149,14 @@ export default function Advisory() {
     setPlanning(true);
     setPlanError(null);
     try {
-      const res = await fetch('/api/crop-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          month: planMonth,
-          acres: planAcres,
-          waterSource: planWater,
-          language,
-          state: selectedFarm?.state || '',
-          district: selectedFarm?.district || '',
-        }),
+      const data = await geminiClient.suggestCropPlan({
+        month: planMonth,
+        acres: planAcres,
+        waterSource: planWater,
+        language,
+        state: selectedFarm?.state || '',
+        district: selectedFarm?.district || '',
       });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.message || 'Failed to get plan');
       setCropPlans(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error(err);
@@ -215,39 +232,30 @@ export default function Advisory() {
     setIsTyping(true);
 
     try {
-      const res = await fetch('/api/advisory', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...selectedFarm,
-          crop: primaryCrop(selectedFarm),
-          acres: selectedFarm.area,
-          state: selectedFarm.state,
-          district: selectedFarm.district,
-          temp: weather?.temp || 30,
-          humidity: weather?.humidity || 50,
-          rainChance: weather?.rainChance || 0,
-          date: new Date().toLocaleDateString(),
-          question: text,
-          language
-        })
+      const textResponse = await geminiClient.generateAdvisory({
+        ...selectedFarm,
+        crop: primaryCrop(selectedFarm),
+        acres: selectedFarm.area,
+        state: selectedFarm.state,
+        district: selectedFarm.district,
+        temp: weather?.temp || 30,
+        humidity: weather?.humidity || 50,
+        rainChance: weather?.rainChance || 0,
+        date: new Date().toLocaleDateString(),
+        question: text,
+        language
       });
-      
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        throw new Error(data.message || 'Advisory failed');
-      }
 
       if (user && !isMockConfig) {
         await addDoc(collection(db, 'users', user.uid, 'advisoryHistory'), {
           question: text,
-          response: data.text,
+          response: textResponse,
           timestamp: new Date().toISOString(),
         });
       } else {
         setMessages((prev) => [
           ...prev,
-          { id: Date.now().toString(), role: 'ai', text: data.text, timestamp: new Date().toISOString() },
+          { id: Date.now().toString(), role: 'ai', text: textResponse, timestamp: new Date().toISOString() },
         ]);
       }
     } catch (error) {

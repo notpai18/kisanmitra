@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { db, isMockConfig } from '../lib/firebase';
-import { collection, addDoc, query, orderBy, limit, onSnapshot, getDocs } from 'firebase/firestore';
+import { collection, addDoc, query, orderBy, limit, onSnapshot, getDocs } from '../lib/firebase';
 import LocationSelector from '../components/LocationSelector';
 import { FarmProfileData } from '../components/FarmFormModal';
 import { Stethoscope, UploadCloud, Camera, Image as ImageIcon, Microscope, CheckCircle, AlertTriangle, Info, ShieldAlert, ShieldCheck, Save, Clock } from 'lucide-react';
@@ -11,6 +11,7 @@ import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
 import { UI } from '../constants/translations';
 import { formatDate } from '../utils/formatDate';
+import { geminiClient } from '../lib/geminiClient';
 
 interface DiagnosisResult {
   disease_name: string;
@@ -80,14 +81,21 @@ export default function CropDoctor() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const reports: CropReport[] = snapshot.docs.map((d) => {
         const raw: any = d.data();
-        const cropName = raw.cropName ?? raw.cropType ?? '';
+        const cropName = raw.cropType ?? raw.cropName ?? '';
         const diseaseName = raw.diseaseName ?? raw.disease_name ?? '';
         const confidence = Number(raw.confidence ?? raw.confidence_percent ?? 0);
         const severity = (raw.severity ?? 'Low') as CropReport['severity'];
-        const symptoms = raw.symptoms ?? raw.cause ?? '';
-        const treatment = raw.treatment ?? (Array.isArray(raw.treatment_steps) ? raw.treatment_steps.join('\n') : '');
-        const prevention = raw.prevention ?? (Array.isArray(raw.prevention_tips) ? raw.prevention_tips.join('\n') : '');
-        const createdAt = raw.createdAt ?? raw.timestamp ?? '';
+        const symptoms = raw.cause ?? raw.symptoms ?? '';
+        
+        const treatment = Array.isArray(raw.treatment) 
+          ? raw.treatment.join('\n') 
+          : (raw.treatment ?? (Array.isArray(raw.treatment_steps) ? raw.treatment_steps.join('\n') : ''));
+          
+        const prevention = Array.isArray(raw.prevention) 
+          ? raw.prevention.join('\n') 
+          : (raw.prevention ?? (Array.isArray(raw.prevention_tips) ? raw.prevention_tips.join('\n') : ''));
+
+        const createdAt = raw.timestamp ?? raw.createdAt ?? '';
         return {
           id: d.id,
           cropName,
@@ -161,18 +169,9 @@ export default function CropDoctor() {
     setSaveSuccess(false);
 
     try {
-      const res = await fetch('/api/crop-doctor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image, cropType, language, state: ctxState, district: ctxDistrict })
-      });
-
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        throw new Error(data.message || 'Failed to analyze image');
-      }
-
+      const data = await geminiClient.analyzeCropImage({ image, cropType, language, state: ctxState, district: ctxDistrict });
       setResult(data as DiagnosisResult);
+
     } catch (err) {
       console.error(err);
       toast.error(UI.aiUnavailable);
@@ -186,22 +185,16 @@ export default function CropDoctor() {
     if (!user || !result || isMockConfig) return;
     setSaving(true);
     try {
-      const symptoms = result.cause || '';
-      const treatment = Array.isArray(result.treatment_steps) ? result.treatment_steps.join('\n') : '';
-      const prevention = Array.isArray(result.prevention_tips) ? result.prevention_tips.join('\n') : '';
-
+      // Compliance with Firestore rules:
+      // hasOnlyAllowedFields(['cropType', 'diseaseName', 'confidence', 'severity', 'cause', 'treatment', 'prevention', 'isHealthy', 'timestamp'])
       await addDoc(collection(db, 'users', user.uid, 'cropReports'), {
-        cropName: cropType,
+        cropType: cropType,
         diseaseName: result.disease_name,
         confidence: result.confidence_percent,
         severity: result.severity,
-        symptoms,
-        treatment,
-        prevention,
-        // Keep these too (back-compat + future UI)
         cause: result.cause,
-        treatment_steps: result.treatment_steps,
-        prevention_tips: result.prevention_tips,
+        treatment: Array.isArray(result.treatment_steps) ? result.treatment_steps : [result.treatment_steps],
+        prevention: Array.isArray(result.prevention_tips) ? result.prevention_tips : [result.prevention_tips],
         isHealthy: result.is_healthy,
         timestamp: new Date().toISOString(),
       });

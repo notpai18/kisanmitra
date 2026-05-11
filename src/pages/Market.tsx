@@ -13,11 +13,11 @@ import {
   limit,
   startAfter,
   getDocs,
+  serverTimestamp,
+  increment,
   QueryConstraint,
   QueryDocumentSnapshot,
   DocumentData,
-  serverTimestamp,
-  increment,
 } from 'firebase/firestore';
 import {
   Store,
@@ -65,8 +65,9 @@ interface Listing {
   imageUrl?: string;
   isBidding: boolean;
   status: 'active' | 'sold' | 'archived';
-  createdAt: string;
+  createdAt: any;
   highestBid?: number;
+  bidCount?: number;
 }
 
 interface Bid {
@@ -74,6 +75,7 @@ interface Bid {
   listingId: string;
   buyerId: string;
   buyerName: string;
+  crop?: string;
   amount: number;
   quantity: number;
   message: string;
@@ -193,7 +195,7 @@ const ListingCard = memo(function ListingCard({ listing, isFarmer, onPlaceBid, o
             <button
               type="button"
               onClick={() => onPlaceBid(listing)}
-              className={clsx("w-full justify-center text-sm py-3 rounded-xl font-bold transition-all", hasBid ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : "btn-primary")}
+              className={clsx("w-full h-full justify-center text-sm py-3 rounded-xl font-bold transition-all", hasBid ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : "btn-primary")}
             >
               {hasBid ? 'Bid Again' : 'Place Bid'}
             </button>
@@ -224,7 +226,7 @@ const ListingCard = memo(function ListingCard({ listing, isFarmer, onPlaceBid, o
                     });
                     toast.success('Added to Cart');
                   }}
-                  className="bg-forest-600 hover:bg-forest-700 text-white w-full justify-center text-sm py-3 rounded-xl font-bold transition-colors"
+                  className="bg-forest-600 hover:bg-forest-700 text-white w-full h-full justify-center text-sm py-3 rounded-xl font-bold transition-colors"
                 >
                   Buy Now
                 </button>
@@ -234,14 +236,18 @@ const ListingCard = memo(function ListingCard({ listing, isFarmer, onPlaceBid, o
         </div>
       )}
 
-      {isFarmer && listing.status === 'sold' && (
+      {isFarmer && (listing.status === 'sold' || listing.status === 'active') && (
          <div className="mt-auto pt-2 border-t border-gray-100">
           <button
             type="button"
-            onClick={() => onArchiveListing?.(listing.id)}
+            onClick={() => {
+              if (window.confirm('Are you sure you want to archive this listing?')) {
+                onArchiveListing?.(listing.id);
+              }
+            }}
             className="w-full text-center text-sm font-bold text-gray-500 py-3 hover:text-red-500 transition-colors"
           >
-            Clear Completed Listing
+            {listing.status === 'sold' ? 'Clear Completed Listing' : 'Archive Listing'}
           </button>
          </div>
       )}
@@ -294,11 +300,12 @@ function RatingWidget({ bid, listing }: { bid: Bid, listing: Listing }) {
   );
 }
 
-const useMarketFilters = (listings: Listing[]) => {
+const useMarketFilters = (listings: Listing[], initialDistrict: string = "") => {
   const [search, setSearch] = useState("");
   const [state, setState] = useState("");
+  const [district, setDistrict] = useState(initialDistrict);
   const [grade, setGrade] = useState("");
-  const [priceRange, setPriceRange] = useState([0, 10000]);
+  const [priceRange, setPriceRange] = useState([0, 20000]);
   const [sortBy, setSortBy] = useState("newest");
   
   const filtered = useMemo(() => {
@@ -307,54 +314,64 @@ const useMarketFilters = (listings: Listing[]) => {
         l.crop.toLowerCase()
           .includes(search.toLowerCase()))
       .filter(l => !state || l.state === state)
+      .filter(l => !district || l.district === district)
       .filter(l => !grade || l.grade === grade)
       .filter(l => 
         l.price >= priceRange[0] && 
         l.price <= priceRange[1])
       .sort((a, b) => {
+        const aTime = a.createdAt?.toMillis?.() || (typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : 0);
+        const bTime = b.createdAt?.toMillis?.() || (typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : 0);
+
         if (sortBy === "newest") {
-           const aTime = (a.createdAt as any)?.toMillis?.() || 0;
-           const bTime = (b.createdAt as any)?.toMillis?.() || 0;
-           return bTime - aTime;
+           // Handle serverTimestamp which might be a FieldValue or null initially
+           const aVal = a.createdAt?.toMillis?.() || (typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : Date.now());
+           const bVal = b.createdAt?.toMillis?.() || (typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : Date.now());
+           return bVal - aVal;
         }
         if (sortBy === "price_asc") 
           return a.price - b.price;
         if (sortBy === "price_desc") 
           return b.price - a.price;
         if (sortBy === "most_bids") 
-          return ((b as any).bidCount || 0) - ((a as any).bidCount || 0);
+          return (b.bidCount || 0) - (a.bidCount || 0);
         return 0;
       });
-  }, [listings, search, state, grade, priceRange, sortBy]);
+  }, [listings, search, state, district, grade, priceRange, sortBy]);
   
-  return { filtered, search, setSearch, state, setState,
-           grade, setGrade, priceRange, setPriceRange,
-           sortBy, setSortBy };
+  return { 
+    filtered, search, setSearch, state, setState,
+    district, setDistrict,
+    grade, setGrade, priceRange, setPriceRange,
+    sortBy, setSortBy 
+  };
 };
 
 export default function Market() {
   const { user, userData } = useAuth();
   const { t, language } = useLanguage();
-  const isFarmer = userData?.role === 'farmer';
+  const isFarmerOrSeller = userData?.role === 'farmer' || userData?.role === 'seller';
 
-  const [activeTab, setActiveTab] = useState<'listings' | 'bids'>('listings');
+  const [activeTab, setActiveTab] = useState<'market' | 'my_listings' | 'bids'>('market');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showBidModal, setShowBidModal] = useState<Listing | null>(null);
 
   const [listings, setListings] = useState<Listing[]>([]);
-  const { filtered, search, setSearch, state, setState, grade, setGrade, priceRange, setPriceRange, sortBy, setSortBy } = useMarketFilters(listings);
+  const { 
+    filtered, search, setSearch, state, setState, 
+    district: filterDistrict, setDistrict: setFilterDistrict, 
+    grade, setGrade, priceRange, setPriceRange, 
+    sortBy, setSortBy 
+  } = useMarketFilters(listings);
   const [listingsLoading, setListingsLoading] = useState(true);
   const [listingsError, setListingsError] = useState<string | null>(null);
-  const lastVisibleRef = useRef<QueryDocumentSnapshot<DocumentData> | null>(null);
-  const [hasMore, setHasMore] = useState(true);
+  const lastVisibleRef = useRef<any>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
   const [bids, setBids] = useState<Bid[]>([]);
   const [bidsLoading, setBidsLoading] = useState(true);
   const [bidsError, setBidsError] = useState<string | null>(null);
-
-  const [filterCrop, setFilterCrop] = useState('');
-  const [filterDistrict, setFilterDistrict] = useState('');
 
   const [newListing, setNewListing] = useState({
     crop: 'Wheat',
@@ -416,28 +433,18 @@ export default function Market() {
     setListingsError(null);
     try {
       const constraints: QueryConstraint[] = [];
-      if (isFarmer) {
+      
+      if (activeTab === 'my_listings' || (activeTab === 'bids' && isFarmerOrSeller)) {
         constraints.push(where('farmerId', '==', user.uid));
       } else {
         constraints.push(where('status', '==', 'active'));
       }
-      if (!isFarmer && filterCrop) constraints.push(where('crop', '==', filterCrop));
-
+      
       const qList = query(collection(db, 'listings'), ...constraints);
       const snap = await getDocs(qList);
       let data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-      data.sort((a: any, b: any) => {
-        const aTime = a.createdAt?.toMillis?.() || 0;
-        const bTime = b.createdAt?.toMillis?.() || 0;
-        return bTime - aTime;
-      });
-
-      let filtered = data.filter((l: any) => l.status !== 'archived');
-      if (!isFarmer && filterDistrict) {
-        filtered = filtered.filter((l: any) => l.district === filterDistrict);
-      }
-      setListings(filtered as Listing[]);
+      setListings(data.filter((l: any) => l.status !== 'archived') as Listing[]);
       setHasMore(false);
     } catch (e) {
       console.error(e);
@@ -446,7 +453,7 @@ export default function Market() {
     } finally {
       setListingsLoading(false);
     }
-  }, [user, isFarmer, filterCrop, filterDistrict, isMockConfig]);
+  }, [user, activeTab, isMockConfig, isFarmerOrSeller]);
 
   useEffect(() => {
     fetchListings();
@@ -481,7 +488,7 @@ export default function Market() {
     setBidsLoading(true);
     setBidsError(null);
     let qBids;
-    if (isFarmer) {
+    if (isFarmerOrSeller) {
       qBids = query(collection(db, 'bids'), where('farmerId', '==', user.uid));
     } else {
       qBids = query(collection(db, 'bids'), where('buyerId', '==', user.uid));
@@ -502,7 +509,7 @@ export default function Market() {
       }
     );
     return () => unsub();
-  }, [user, isFarmer, isMockConfig]);
+  }, [user, isFarmerOrSeller, isMockConfig]);
 
   const handleAddListing = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -511,10 +518,37 @@ export default function Market() {
       setListingLocError((p) => ({ ...p, district: t('loc_err_district') }));
       return;
     }
-    if (!user || !userData || isMockConfig) {
+    if (!user || !userData) {
       setShowAddModal(false);
       return;
     }
+
+    if (isMockConfig) {
+      const mockNewListing: Listing = {
+        id: `mock-${Date.now()}`,
+        farmerId: user.uid,
+        farmerName: userData.name || 'Farmer',
+        crop: newListing.crop,
+        quantity: Number(newListing.quantity),
+        unit: newListing.unit,
+        grade: newListing.grade,
+        price: Number(newListing.price),
+        harvestDate: newListing.harvestDate,
+        state: UP_ONLY_STATE,
+        district: newListing.district,
+        description: newListing.description || '',
+        isBidding: newListing.isBidding,
+        status: 'active',
+        highestBid: 0,
+        bidCount: 0,
+        createdAt: { toMillis: () => Date.now() },
+      };
+      setListings(prev => [mockNewListing, ...prev]);
+      setShowAddModal(false);
+      toast.success('Listing published (Mock Mode)');
+      return;
+    }
+
     try {
       await addDoc(collection(db, 'listings'), {
         farmerId: user.uid,
@@ -545,10 +579,45 @@ export default function Market() {
 
   const handlePlaceBid = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !userData || !showBidModal || isMockConfig) {
+    if (!user || !userData || !showBidModal) {
       setShowBidModal(null);
       return;
     }
+
+    if (isMockConfig) {
+      const amount = Number(newBid.amount);
+      const mockNewBid: Bid = {
+        id: `bid-${Date.now()}`,
+        listingId: showBidModal.id,
+        farmerId: showBidModal.farmerId,
+        buyerId: user.uid,
+        buyerName: userData.name || 'Buyer',
+        crop: showBidModal.crop,
+        amount: amount,
+        quantity: Number(newBid.quantity),
+        message: newBid.message || '',
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      };
+      setBids(prev => [mockNewBid, ...prev]);
+      
+      // Update listing in local state to reflect new bid
+      setListings(prev => prev.map(l => {
+        if (l.id === showBidModal.id) {
+          return {
+            ...l,
+            bidCount: (l.bidCount || 0) + 1,
+            highestBid: Math.max(l.highestBid || 0, amount)
+          };
+        }
+        return l;
+      }));
+
+      setShowBidModal(null);
+      toast.success('Bid placed (Mock Mode)');
+      return;
+    }
+
     try {
       const amount = Number(newBid.amount);
 
@@ -577,6 +646,7 @@ export default function Market() {
         farmerId: showBidModal.farmerId,
         buyerId: user.uid,
         buyerName: userData.name || 'Buyer',
+        crop: showBidModal.crop,
         amount: amount,
         quantity: Number(newBid.quantity),
         message: newBid.message || '',
@@ -607,7 +677,12 @@ export default function Market() {
   };
 
   const handleAcceptBid = async (bid: Bid) => {
-    if (isMockConfig) return;
+    if (isMockConfig) {
+      setBids(prev => prev.map(b => b.id === bid.id ? { ...b, status: 'accepted' } : (b.listingId === bid.listingId && b.status === 'pending' ? { ...b, status: 'declined' } : b)));
+      setListings(prev => prev.map(l => l.id === bid.listingId ? { ...l, status: 'sold' } : l));
+      toast.success('Bid accepted (Mock Mode)');
+      return;
+    }
     try {
       await updateDoc(doc(db, 'bids', bid.id), { status: 'accepted' });
       await updateDoc(doc(db, 'listings', bid.listingId), {
@@ -616,6 +691,27 @@ export default function Market() {
         soldAt: serverTimestamp(),
       });
 
+      // Decline other pending bids for this listing
+      const otherBidsQ = query(
+        collection(db, 'bids'), 
+        where('listingId', '==', bid.listingId),
+        where('status', '==', 'pending')
+      );
+      const otherSnap = await getDocs(otherBidsQ);
+      const batchPromises = otherSnap.docs
+        .filter(d => d.id !== bid.id)
+        .map(async (d) => {
+          await updateDoc(doc(db, 'bids', d.id), { status: 'declined' });
+          const bData = d.data();
+          await NotificationService.sendNotification(bData.buyerId, {
+            title: 'Bid Declined',
+            message: `The item ${bid.listingId} was sold to another bidder.`,
+            type: 'bid',
+            relatedId: bid.listingId
+          });
+        });
+      await Promise.all(batchPromises);
+
       await NotificationService.sendNotification(bid.buyerId, {
         title: 'Bid Accepted!',
         message: `Your bid of ₹${bid.amount} was accepted.`,
@@ -623,7 +719,7 @@ export default function Market() {
         relatedId: bid.listingId
       });
 
-      toast.success('Bid accepted');
+      toast.success('Bid accepted and others declined');
     } catch (error) {
       console.error('Error accepting bid:', error);
       toast.error(UI.errorTitleEn);
@@ -631,7 +727,11 @@ export default function Market() {
   };
 
   const handleDeclineBid = async (bidId: string, buyerId: string, amount: number, listingId: string) => {
-    if (isMockConfig) return;
+    if (isMockConfig) {
+      setBids(prev => prev.map(b => b.id === bidId ? { ...b, status: 'declined' } : b));
+      toast.success('Bid declined (Mock Mode)');
+      return;
+    }
     try {
       await updateDoc(doc(db, 'bids', bidId), { status: 'declined' });
 
@@ -650,6 +750,11 @@ export default function Market() {
   };
 
   const handleArchiveListing = async (listingId: string) => {
+    if (isMockConfig) {
+      setListings(prev => prev.filter(l => l.id !== listingId));
+      toast.success('Listing Archived (Mock Mode)');
+      return;
+    }
     try {
       await updateDoc(doc(db, 'listings', listingId), { status: 'archived' });
       setListings(prev => prev.filter(l => l.id !== listingId));
@@ -661,6 +766,11 @@ export default function Market() {
   };
 
   const handleArchiveBid = async (bidId: string) => {
+    if (isMockConfig) {
+      setBids(prev => prev.filter(b => b.id !== bidId));
+      toast.success('Bid Archived (Mock Mode)');
+      return;
+    }
     try {
       await updateDoc(doc(db, 'bids', bidId), { status: 'archived' });
       setBids(prev => prev.filter(b => b.id !== bidId));
@@ -671,7 +781,7 @@ export default function Market() {
     }
   };
 
-  const farmerBids = isFarmer ? bids.filter((b) => listings.some((l) => l.id === b.listingId)) : [];
+  const farmerBids = isFarmerOrSeller ? bids.filter((b) => listings.some((l) => l.id === b.listingId)) : [];
 
   const openBidModal = (listing: Listing) => {
     setNewBid({ amount: listing.price, quantity: listing.quantity, message: '' });
@@ -724,14 +834,26 @@ export default function Market() {
         <div className="flex bg-white rounded-2xl p-1 shadow-[0_4px_24px_rgba(0,0,0,0.06)] border border-gray-100 w-full sm:w-auto">
           <button
             type="button"
-            onClick={() => setActiveTab('listings')}
+            onClick={() => setActiveTab('market')}
             className={clsx(
               'flex-1 sm:flex-none px-6 py-3 rounded-xl font-medium text-sm transition-colors min-h-[44px]',
-              activeTab === 'listings' ? 'bg-[#D1FAE5] text-[#1B4332]' : 'text-[#6B7280]'
+              activeTab === 'market' ? 'bg-[#D1FAE5] text-[#1B4332]' : 'text-[#6B7280]'
             )}
           >
-            {isFarmer ? t('mkt_farmer_tab') : t('mkt_buyer_tab')}
+            {language === 'en' ? 'Buy' : 'खरीदें'}
           </button>
+          {isFarmerOrSeller && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('my_listings')}
+              className={clsx(
+                'flex-1 sm:flex-none px-6 py-3 rounded-xl font-medium text-sm transition-colors min-h-[44px]',
+                activeTab === 'my_listings' ? 'bg-[#D1FAE5] text-[#1B4332]' : 'text-[#6B7280]'
+              )}
+            >
+              {language === 'en' ? 'My Listings' : 'मेरी लिस्टिंग'}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setActiveTab('bids')}
@@ -740,11 +862,11 @@ export default function Market() {
               activeTab === 'bids' ? 'bg-[#D1FAE5] text-[#1B4332]' : 'text-[#6B7280]'
             )}
           >
-            {isFarmer ? t('mkt_bids_tab') : t('mkt_my_bids')}
+            {isFarmerOrSeller ? t('mkt_bids_tab') : t('mkt_my_bids')}
           </button>
         </div>
 
-        {isFarmer && activeTab === 'listings' && (
+        {isFarmerOrSeller && activeTab === 'my_listings' && (
           <button type="button" onClick={handleOpenAddModal} className="btn-secondary w-full sm:w-auto justify-center gap-2 flex items-center">
             <Plus className="w-5 h-5" /> {t('mkt_add_listing')}
           </button>
@@ -752,44 +874,78 @@ export default function Market() {
       </div>
 
       <div className="min-h-[400px]">
-        {activeTab === 'listings' && (
+        {(activeTab === 'market' || activeTab === 'my_listings') && (
           <div className="space-y-6">
-            <div className="flex flex-col md:flex-row gap-3 mb-6 bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-              <div className="flex-1 relative">
-                <input
-                  type="text"
-                  placeholder={language === 'en' ? 'Search crops...' : 'फसल खोजें...'}
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-4 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 focus:border-[#1B4332] transition-all"
-                />
-                {search && (
-                  <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
+            <div className="space-y-4 mb-6 bg-white p-4 md:p-6 rounded-2xl shadow-sm border border-gray-100">
+              <div className="flex flex-col md:flex-row gap-4">
+                <div className="flex-1 relative">
+                  <input
+                    type="text"
+                    placeholder={language === 'en' ? 'Search crops...' : 'फसल खोजें...'}
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="w-full pl-4 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 focus:border-[#1B4332] transition-all"
+                  />
+                  {search && (
+                    <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 focus:border-[#1B4332]"
+                  >
+                    <option value="newest">{language === 'en' ? 'Newest' : 'नवीनतम'}</option>
+                    <option value="price_asc">{language === 'en' ? 'Price: Low to High' : 'कीमत: कम से ज्यादा'}</option>
+                    <option value="price_desc">{language === 'en' ? 'Price: High to Low' : 'कीमत: ज्यादा से कम'}</option>
+                    <option value="most_bids">{language === 'en' ? 'Most Bids' : 'सबसे ज्यादा बोलियां'}</option>
+                  </select>
+                  <select
+                    value={grade}
+                    onChange={(e) => setGrade(e.target.value)}
+                    className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 focus:border-[#1B4332]"
+                  >
+                    <option value="">{language === 'en' ? 'All Grades' : 'सभी ग्रेड'}</option>
+                    <option value="A">Grade A</option>
+                    <option value="B">Grade B</option>
+                    <option value="C">Grade C</option>
+                  </select>
+                </div>
               </div>
-              <div className="flex gap-2 overflow-x-auto hide-scrollbar snap-x">
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
-                  className="shrink-0 snap-start bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 focus:border-[#1B4332]"
-                >
-                  <option value="newest">{language === 'en' ? 'Newest' : 'नवीनतम'}</option>
-                  <option value="price_asc">{language === 'en' ? 'Price: Low to High' : 'कीमत: कम से ज्यादा'}</option>
-                  <option value="price_desc">{language === 'en' ? 'Price: High to Low' : 'कीमत: ज्यादा से कम'}</option>
-                  <option value="most_bids">{language === 'en' ? 'Most Bids' : 'सबसे ज्यादा बोलियां'}</option>
-                </select>
-                <select
-                  value={grade}
-                  onChange={(e) => setGrade(e.target.value)}
-                  className="shrink-0 snap-start bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 focus:border-[#1B4332]"
-                >
-                  <option value="">{language === 'en' ? 'All Grades' : 'सभी ग्रेड'}</option>
-                  <option value="A">Grade A</option>
-                  <option value="B">Grade B</option>
-                  <option value="C">Grade C</option>
-                </select>
+
+              <div className="flex flex-col md:flex-row gap-4 pt-4 border-t border-gray-50">
+                <div className="flex-1">
+                  <label className="text-xs font-bold text-gray-400 uppercase mb-2 block">District</label>
+                  <select
+                    value={filterDistrict}
+                    onChange={(e) => setFilterDistrict(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20"
+                  >
+                    <option value="">{language === 'en' ? 'All Districts' : 'सभी जिले'}</option>
+                    {UP_DISTRICTS.map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs font-bold text-gray-400 uppercase mb-2 block">
+                    Price Range: {formatRupee(priceRange[0])} - {formatRupee(priceRange[1])}
+                  </label>
+                  <div className="flex gap-4 items-center">
+                    <input
+                      type="range"
+                      min="0"
+                      max="10000"
+                      step="100"
+                      value={priceRange[1]}
+                      onChange={(e) => setPriceRange([priceRange[0], Number(e.target.value)])}
+                      className="flex-1 accent-[#1B4332]"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -813,7 +969,7 @@ export default function Market() {
                 <Store className="w-14 h-14 text-[#D1FAE5] mx-auto mb-4" />
                 <p className="ds-section-title font-devanagari text-[#111827]">{UI.marketEmptyHi}</p>
                 <p className="ds-caption mb-6">{UI.marketEmptyEn}</p>
-                {isFarmer && (
+                {isFarmerOrSeller && (
                   <button type="button" className="btn-secondary" onClick={() => setShowAddModal(true)}>
                     {UI.addFirstListing}
                   </button>
@@ -823,7 +979,7 @@ export default function Market() {
               <>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {filtered.map((listing) => (
-                    <ListingCard key={listing.id} listing={listing} isFarmer={!!isFarmer} onPlaceBid={openBidModal} onArchiveListing={handleArchiveListing} hasBid={!isFarmer && bids.some(b => b.listingId === listing.id)} />
+                    <ListingCard key={listing.id} listing={listing} isFarmer={user?.uid === listing.farmerId} onPlaceBid={openBidModal} onArchiveListing={handleArchiveListing} hasBid={!isFarmerOrSeller && bids.some(b => b.listingId === listing.id)} />
                   ))}
                 </div>
                 {filtered.length === 0 && (
@@ -857,7 +1013,7 @@ export default function Market() {
               </div>
             ) : bidsError ? (
               <div className="p-8 text-center text-[#EF4444]">⚠️ {bidsError}</div>
-            ) : (isFarmer ? farmerBids : bids).length === 0 ? (
+            ) : (isFarmerOrSeller ? farmerBids : bids).length === 0 ? (
               <div className="text-center py-12 px-4">
                 <Clock className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                 <h3 className="ds-card-title">No bids yet</h3>
@@ -865,7 +1021,7 @@ export default function Market() {
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
-                {(isFarmer ? farmerBids : bids).map((bid) => {
+                {(isFarmerOrSeller ? farmerBids : bids).map((bid) => {
                   const listing = listings.find((l) => l.id === bid.listingId);
                   return (
                     <div
@@ -874,7 +1030,7 @@ export default function Market() {
                     >
                       <div>
                         <div className="flex items-center gap-3 mb-1 flex-wrap">
-                          <h3 className="font-bold text-lg text-[#111827]">{listing?.crop || 'Unknown Crop'}</h3>
+                          <h3 className="font-bold text-lg text-[#111827]">{listing?.crop || bid.crop || 'Unknown Crop'}</h3>
                           <span
                             className={clsx(
                               'px-2.5 py-0.5 rounded-full text-xs font-bold uppercase',
@@ -889,7 +1045,7 @@ export default function Market() {
                           </span>
                         </div>
                         <p className="text-sm text-[#6B7280] mb-2">
-                          {isFarmer ? `Bid from ${bid.buyerName}` : `Bid on ${listing?.farmerName}'s listing`}
+                          {isFarmerOrSeller ? `Bid from ${bid.buyerName}` : `Bid on ${listing?.farmerName}'s listing`}
                         </p>
                         <div className="flex flex-wrap gap-4 text-sm">
                           <span className="flex items-center gap-1 text-[#6B7280]">
@@ -910,7 +1066,7 @@ export default function Market() {
                           </div>
                         )}
                       </div>
-                      {isFarmer && bid.status === 'pending' && (
+                      {isFarmerOrSeller && bid.status === 'pending' && (
                         <div className="flex gap-2 w-full justify-end sm:w-auto mt-3 md:mt-0 items-center shrink-0">
                           <button
                             type="button"
@@ -929,7 +1085,7 @@ export default function Market() {
                         </div>
                       )}
                       
-                      {!isFarmer && bid.status === 'accepted' && (
+                      {!isFarmerOrSeller && bid.status === 'accepted' && (
                         <div className="flex gap-4 mt-3 md:mt-0 w-full justify-end sm:w-auto shrink-0 border-l pl-4 border-gray-100 items-center">
                           <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-[#D1FAE5] text-[#065f46]">
                             Won! ✓
@@ -941,7 +1097,7 @@ export default function Market() {
                         </div>
                       )}
 
-                      {!isFarmer && bid.status === 'declined' && (
+                      {!isFarmerOrSeller && bid.status === 'declined' && (
                          <div className="flex gap-2 mt-3 md:mt-0 w-full justify-end sm:w-auto shrink-0 border-l pl-4 border-gray-100">
                            <button onClick={() => handleArchiveBid(bid.id)} className="text-gray-400 hover:text-red-500 font-bold text-sm">
                              Clear
@@ -1123,7 +1279,7 @@ export default function Market() {
             >
               <div className="p-6 border-b border-gray-100 flex justify-between items-start">
                 <div>
-                  <h2 className="text-xl font-bold text-[#111827]">{showBidModal.isBidding ? 'Place a Bid' : 'Buy Now'}</h2>
+                  <h2 className="text-xl font-bold text-[#111827]">Place a Bid</h2>
                   <p className="text-sm text-[#6B7280] mt-1">
                     {showBidModal.crop} from {showBidModal.farmerName}
                   </p>
@@ -1160,15 +1316,10 @@ export default function Market() {
                   <input
                     type="number"
                     required
-                    min={showBidModal.isBidding ? (showBidModal.highestBid ? showBidModal.highestBid + 1 : 1) : showBidModal.price}
-                    max={showBidModal.isBidding ? undefined : showBidModal.price}
-                    readOnly={!showBidModal.isBidding}
+                    min={showBidModal.highestBid ? showBidModal.highestBid + 1 : 1}
                     value={newBid.amount}
                     onChange={(e) => setNewBid({ ...newBid, amount: Number(e.target.value) })}
-                    className={clsx(
-                      'w-full rounded-xl border border-gray-200 p-3 text-lg font-bold min-h-[44px]',
-                      !showBidModal.isBidding && 'bg-[#F9FAFB]'
-                    )}
+                    className="w-full rounded-xl border border-gray-200 p-3 text-lg font-bold min-h-[44px]"
                   />
                 </div>
                 <div>
@@ -1193,7 +1344,7 @@ export default function Market() {
                   />
                 </div>
                 <button type="submit" className="btn-primary w-full justify-center text-base py-3">
-                  {showBidModal.isBidding ? 'Submit Bid' : 'Confirm Purchase'}
+                  Submit Bid
                 </button>
               </form>
             </motion.div>

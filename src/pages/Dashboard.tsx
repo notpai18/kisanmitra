@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { db, isMockConfig } from '../lib/firebase';
-import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs } from '../lib/firebase';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { CloudRain, Droplets, Wind, Sun, TrendingUp, TrendingDown, Minus, Sprout, Lightbulb, Stethoscope, Store, Landmark, ShoppingCart, Map } from 'lucide-react';
+import { CloudRain, Droplets, Wind, Sun, TrendingUp, TrendingDown, Minus, Sprout, Lightbulb, Stethoscope, Store, Landmark, ShoppingCart, Map as MapIcon } from 'lucide-react';
 import { clsx } from 'clsx';
 import { motion } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
@@ -70,7 +70,25 @@ export default function Dashboard() {
   };
 
   const fetchMyFarms = async (): Promise<FarmProfileData[]> => {
-    if (!user || isMockConfig || !isFarmer) return [];
+    if (!user || !isFarmer) return [];
+    if (isMockConfig) {
+      const mockFarms = [
+        {
+          id: 'mock-farm-1',
+          name: 'Green Valley Farm',
+          crops: ['Wheat'],
+          area: 5,
+          soil: 'Alluvial',
+          state: 'Uttar Pradesh',
+          district: 'Varanasi',
+          irrigation: 'Tubewell',
+          season: 'Rabi',
+          createdAt: new Date().toISOString()
+        }
+      ];
+      setFarms(mockFarms);
+      return mockFarms;
+    }
     try {
       setFarmsLoading(true);
       const fQ = query(collection(db, `users/${user.uid}/farms`));
@@ -417,7 +435,7 @@ export default function Dashboard() {
           <div className="ds-card flex flex-col bg-white border border-gray-100">
             <div className="flex items-center justify-between mb-4">
               <h2 className="ds-section-title flex items-center gap-2 text-[#1B4332] font-devanagari">
-                <Map className="w-6 h-6 text-[#10B981]" /> {language === 'en' ? 'My Farms' : 'मेरे खेत'}
+                <MapIcon className="w-6 h-6 text-[#10B981]" /> {language === 'en' ? 'My Farms' : 'मेरे खेत'}
               </h2>
               <button 
                  onClick={() => setIsFarmFormOpen(true)} 
@@ -443,7 +461,7 @@ export default function Dashboard() {
                        <div>
                          <p className="font-bold text-base text-gray-900">{f.name}</p>
                          <div className="flex items-center gap-2 mt-0.5">
-                           <span className="flex items-center gap-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md"><Map className="w-3 h-3"/> {formatLocationLine(f.district, f.state)}</span>
+                           <span className="flex items-center gap-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md"><MapIcon className="w-3 h-3"/> {formatLocationLine(f.district, f.state)}</span>
                            <span className="text-xs font-bold text-forest-700 bg-forest-50 px-2 py-0.5 rounded-md">{f.area} Acres</span>
                          </div>
                        </div>
