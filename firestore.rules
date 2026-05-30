@@ -1,6 +1,78 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Allow all for now (development mode)
+    // TODO: Add proper authentication rules for production
+
+    // User profiles
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Group Listings
+    match /groupListings/{listingId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null;
+    }
+
+    // Group Listing Items (subcollection)
+    match /groupListings/{listingId}/items/{itemId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null;
+    }
+
+    // Orders
+    match /orders/{orderId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Alerts
+    match /alerts/{alertId} {
+      allow read: if request.auth != null;
+      allow create: if true; // Cloud functions create alerts
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null;
+    }
+
+    // Ratings
+    match /ratings/{ratingId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Disputes
+    match /disputes/{disputeId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // User notifications subcollection
+    match /users/{userId}/notifications/{notificationId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // User tokens subcollection (for FCM)
+    match /users/{userId}/tokens/{tokenId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // User cropReports subcollection (for Crop Doctor)
+    match /users/{userId}/cropReports/{reportId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Catch-all: allow everything
     match /{document=**} {
       allow read, write: if true;
     }

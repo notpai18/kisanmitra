@@ -34,9 +34,10 @@ interface ChatMessage {
 }
 
 export default function Advisory() {
-  const { user } = useAuth();
+  const { user, userData } = useAuth();
   const { t, language } = useLanguage();
-  
+  const isVillageAgent = userData?.role === 'village_agent';
+
   const [farms, setFarms] = useState<FarmProfileData[]>([]);
   const [selectedFarm, setSelectedFarm] = useState<FarmProfileData | null>(null);
   const [isFarmFormOpen, setIsFarmFormOpen] = useState(false);
@@ -128,8 +129,34 @@ export default function Advisory() {
     }
     setFarmsLoading(true);
     try {
-      const snapshot = await getDocs(collection(db, 'users', user.uid, 'farms'));
-      const loaded = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FarmProfileData));
+      let loaded: FarmProfileData[] = [];
+
+      if (isVillageAgent) {
+        // For village agents, load their managed farmers
+        const farmersSnapshot = await getDocs(collection(db, `users/${user.uid}/farmers`));
+        loaded = farmersSnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            name: data.name || '',
+            state: data.state || '',
+            district: data.district || '',
+            village: data.village || '',
+            area: data.area || 0,
+            areaUnit: data.areaUnit || 'acre',
+            soilType: data.soilType || '',
+            irrigation: data.irrigation || '',
+            crops: data.crops || [],
+            season: data.season || 'Rabi',
+            createdAt: data.createdAt || new Date().toISOString(),
+          } as unknown as FarmProfileData;
+        });
+      } else {
+        // For regular users, load their farms
+        const snapshot = await getDocs(collection(db, 'users', user.uid, 'farms'));
+        loaded = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FarmProfileData));
+      }
+
       setFarms(loaded);
       if (loaded.length > 0 && !selectedFarm) {
         setSelectedFarm(loaded[0]);
@@ -143,7 +170,7 @@ export default function Advisory() {
 
   useEffect(() => {
     loadFarms();
-  }, [user]);
+  }, [user, isVillageAgent]);
 
   const handleCropPlan = async () => {
     setPlanning(true);

@@ -1,53 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Bell, User as UserIcon, Globe, X, Menu, Stethoscope, LayoutDashboard, Sprout, Store, Landmark, TrendingUp, ShoppingCart, Minus, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useCart } from '../contexts/CartContext';
-import { auth, signOut, db, isMockConfig } from '../lib/firebase';
-import { collection, query, orderBy, onSnapshot, updateDoc, doc } from '../lib/firebase';
+import { useNotifications } from '../contexts/NotificationContext';
+import { auth, signOut, isMockConfig } from '../lib/firebase';
 import CheckoutModal from './CheckoutModal';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
-import { NotificationService } from '../lib/NotificationService';
 import { timeAgo, formatDate } from '../utils/formatDate';
+import type { Notification } from '../types';
 
 export default function Navbar() {
   const { user, userData, setUserData } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const { items: cartItems, isCartOpen, setIsCartOpen, updateQuantity, removeFromCart, clearCart, total } = useCart();
+  const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
   const navigate = useNavigate();
 
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
-  const [notifications, setNotifications] = useState<{ id: string; read?: boolean; title?: string; message?: string; createdAt?: any }[]>([]);
-  const [notifLoading, setNotifLoading] = useState(false);
-  const [notifError, setNotifError] = useState<string | null>(null);
-  const unreadCount = notifications.filter((n) => !n.read).length;
-
-  useEffect(() => {
-    if (!user || isMockConfig) return;
-
-    setNotifLoading(true);
-    setNotifError(null);
-    const q = query(collection(db, `notifications/${user.uid}/items`), orderBy('createdAt', 'desc'));
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        setNotifications(snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as { id: string; read?: boolean; title?: string; message?: string; createdAt?: any })));
-        setNotifLoading(false);
-      },
-      (err) => {
-        console.error('Notifications listener error:', err);
-        setNotifError('Could not load notifications.');
-        setNotifLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [user]);
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
 
   const handleSignOut = () => {
     if (isMockConfig) {
@@ -58,30 +33,28 @@ export default function Navbar() {
     signOut(auth).catch((e) => console.error(e));
   };
 
-  const markAllAsRead = async () => {
-    if (isMockConfig || !user) return;
-    try {
-      const batchDocs = notifications.filter(n => !n.read);
-      for (const n of batchDocs) {
-        await updateDoc(doc(db, `notifications/${user.uid}/items/${n.id}`), { read: true });
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
-
   const toggleLanguage = () => {
     setLanguage(language === 'en' ? 'hi' : 'en');
   };
 
-  const markAsRead = async (id: string) => {
-    if (isMockConfig || !user) return;
-    try {
-      await updateDoc(doc(db, `notifications/${user.uid}/items/${id}`), { read: true });
-    } catch (error) {
-      console.error('Error marking notification as read', error);
+  const handleNotificationClick = (notif: Notification) => {
+    markAsRead(notif.id);
+    if (notif.link) {
+      navigate(notif.link);
+    }
+    setShowNotifications(false);
+  };
+
+  const getNotificationStyles = (type: string) => {
+    switch (type) {
+      case 'success':
+        return 'bg-emerald-50 border-emerald-200';
+      case 'alert':
+        return 'bg-red-50 border-red-200';
+      case 'warning':
+        return 'bg-amber-50 border-amber-200';
+      default:
+        return 'bg-white border-gray-100';
     }
   };
 
@@ -142,7 +115,12 @@ export default function Navbar() {
               >
                 <Bell className="w-5 h-5" />
                 {unreadCount > 0 && (
-                  <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-[#EF4444] border-2 border-white rounded-full" />
+                  <motion.span
+                    initial={{ scale: 0.8 }}
+                    animate={{ scale: [1, 1.2, 1] }}
+                    transition={{ repeat: Infinity, duration: 2 }}
+                    className="absolute top-2 right-2 w-2.5 h-2.5 bg-[#EF4444] border-2 border-white rounded-full"
+                  />
                 )}
               </button>
               <div className="relative group">
@@ -260,26 +238,21 @@ export default function Navbar() {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {notifLoading && notifications.length === 0 ? (
-                  <div className="space-y-3">
-                    <div className="skeleton h-20 w-full" />
-                    <div className="skeleton h-20 w-full" />
-                  </div>
-                ) : notifError ? (
-                  <div className="text-center py-8 text-[#EF4444] text-sm">{notifError}</div>
-                ) : notifications.length === 0 ? (
+                {notifications.length === 0 ? (
                   <div className="text-center py-12 text-[#6B7280]">
                     <Bell className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                     <p>{t('no_notifications')}</p>
                   </div>
                 ) : (
                   notifications.map((notif) => (
-                    <div
+                    <motion.div
                       key={notif.id}
-                      onClick={() => markAsRead(notif.id)}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      onClick={() => handleNotificationClick(notif)}
                       className={clsx(
                         'p-4 rounded-2xl border transition-colors cursor-pointer shadow-[0_4px_24px_rgba(0,0,0,0.06)]',
-                        notif.read ? 'bg-white border-gray-100 opacity-70' : 'bg-[#D1FAE5]/40 border-[#1B4332]/10'
+                        notif.read ? 'bg-white border-gray-100 opacity-70' : getNotificationStyles(notif.type)
                       )}
                     >
                       <div className="flex justify-between items-start mb-1">
@@ -295,7 +268,7 @@ export default function Navbar() {
                           {timeAgo(notif.createdAt)}
                         </span>
                       )}
-                    </div>
+                    </motion.div>
                   ))
                 )}
               </div>

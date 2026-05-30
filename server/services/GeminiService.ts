@@ -6,20 +6,22 @@ import crypto from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const envPaths = [
-  path.resolve(process.cwd(), ".env"),
-  path.resolve(process.cwd(), "../.env"),
-  path.resolve(__dirname, "../../.env"),
-  path.resolve(__dirname, "../../../.env"),
-];
+// In Vercel or other production environments, process.env is already populated.
+// We only need to search for .env in local development.
+if (!process.env.GEMINI_API_KEY) {
+  const envPaths = [
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(__dirname, "../../.env"),
+  ];
 
-for (const envPath of envPaths) {
-  if (!config({ path: envPath }).error) break;
+  for (const envPath of envPaths) {
+    if (!config({ path: envPath }).error) break;
+  }
 }
 
 const API_KEY = process.env.GEMINI_API_KEY || "";
-if (!API_KEY) {
-  console.warn("[GeminiInit] ERROR: GEMINI_API_KEY is undefined");
+if (!API_KEY && process.env.NODE_ENV !== "production") {
+  console.warn("[GeminiInit] WARNING: GEMINI_API_KEY is undefined");
 }
 
 const genAI = new GoogleGenerativeAI(API_KEY);
@@ -34,7 +36,7 @@ class GeminiService {
   private cache = new Map<string, CacheEntry>();
   private requestQueue: number[] = [];
   private readonly MAX_REQUESTS_PER_MINUTE = 10;
-  private readonly MODEL_NAME = "gemini-2.5-flash";
+  private readonly MODEL_NAME = "gemini-3.1-flash-lite";
 
   private getCache<T>(key: string): T | null {
     const entry = this.cache.get(key);

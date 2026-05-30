@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Sprout, Stethoscope, Store, Landmark, TrendingUp, User } from 'lucide-react';
+import { LayoutDashboard, Sprout, Stethoscope, Store, Landmark, TrendingUp, User, Users, Building2, ShoppingBag, Briefcase, BookOpen, Truck, Map, Warehouse, Wallet } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -15,12 +15,22 @@ interface NavItem {
 }
 
 const allNavItems: NavItem[] = [
-  { icon: LayoutDashboard, labelKey: 'nav_dashboard', path: '/dashboard', roles: ['farmer', 'buyer'] },
-  { icon: Sprout, labelKey: 'nav_advisory', path: '/advisory', roles: ['farmer'] },
-  { icon: Stethoscope, labelKey: 'nav_crop_doctor', path: '/crop-doctor', roles: ['farmer'] },
-  { icon: Store, labelKey: 'nav_market', path: '/market', roles: ['farmer', 'buyer'] },
-  { icon: TrendingUp, labelKey: 'nav_insights', path: '/insights', roles: ['buyer'] },
-  { icon: Landmark, labelKey: 'nav_schemes', path: '/schemes', roles: ['farmer'] },
+  { icon: LayoutDashboard, labelKey: 'nav_dashboard', path: '/dashboard', roles: ['farmer', 'buyer', 'village_agent'] },
+  { icon: LayoutDashboard, labelKey: 'nav_dashboard', path: '/transporter-dashboard', roles: ['transporter'] },
+  { icon: Warehouse, labelKey: 'nav_warehouse_dashboard', path: '/warehouse-dashboard', roles: ['warehouse_owner'] },
+  { icon: Map, labelKey: 'nav_load_board', path: '/load-board', roles: ['transporter'] },
+  { icon: Warehouse, labelKey: 'nav_storage_hub', path: '/storage-hub', roles: ['farmer', 'village_agent'] },
+  { icon: Wallet, labelKey: 'nav_vault', path: '/vault', roles: ['farmer', 'village_agent'] },
+  { icon: Sprout, labelKey: 'nav_advisory', path: '/advisory', roles: ['farmer', 'village_agent'] },
+  { icon: Stethoscope, labelKey: 'nav_crop_doctor', path: '/crop-doctor', roles: ['farmer', 'village_agent'] },
+  { icon: ShoppingBag, labelKey: 'nav_input_store', path: '/input-store', roles: ['farmer', 'village_agent'] },
+  { icon: Briefcase, labelKey: 'nav_corporate_contracts', path: '/corporate-contracts', roles: ['buyer', 'village_agent'] },
+  { icon: Store, labelKey: 'nav_market', path: '/market', roles: ['farmer', 'buyer', 'village_agent', 'transporter', 'warehouse_owner'] },
+  { icon: BookOpen, labelKey: 'nav_khata', path: '/khata', roles: ['farmer', 'buyer', 'village_agent'] },
+  { icon: Users, labelKey: 'nav_group_listings', path: '/group-listings', roles: ['farmer', 'seller', 'village_agent'] },
+  { icon: TrendingUp, labelKey: 'nav_insights', path: '/insights', roles: ['buyer', 'village_agent'] },
+  { icon: Landmark, labelKey: 'nav_schemes', path: '/schemes', roles: ['farmer', 'village_agent'] },
+  { icon: Building2, labelKey: 'nav_agent_farmers', path: '/agent/farmers', roles: ['village_agent'] },
 ];
 
 export function Sidebar() {

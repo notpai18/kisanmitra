@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { db, isMockConfig } from '../lib/firebase';
-import { collection, query, where, orderBy, limit, getDocs } from '../lib/firebase';
+import { collection, query, where, orderBy, limit, getDocs, onSnapshot, doc } from '../lib/firebase';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { CloudRain, Droplets, Wind, Sun, TrendingUp, TrendingDown, Minus, Sprout, Lightbulb, Stethoscope, Store, Landmark, ShoppingCart, Map as MapIcon } from 'lucide-react';
+import { CloudRain, Droplets, Wind, Sun, TrendingUp, TrendingDown, Minus, Sprout, Lightbulb, Stethoscope, Store, Landmark, ShoppingCart, Map as MapIcon, Wallet, IndianRupee } from 'lucide-react';
 import { clsx } from 'clsx';
 import { motion } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
@@ -14,6 +14,9 @@ import { formatLocationLine } from '../utils/formatLocation';
 import { resolveWeatherCoords } from '../utils/weatherLocation';
 import SoilMoistureCard from '../components/SoilMoistureCard';
 import MandiTicker from '../components/MandiTicker';
+import SoilTestCard from '../components/SoilTestCard';
+import CreditApplyModal from '../components/CreditApplyModal';
+import TrustScoreCard from '../components/TrustScoreCard';
 
 export default function Dashboard() {
   const { user, userData } = useAuth();
@@ -35,7 +38,9 @@ export default function Dashboard() {
   const [farmsLoading, setFarmsLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [isFarmFormOpen, setIsFarmFormOpen] = useState(false);
+  const [isCreditModalOpen, setIsCreditModalOpen] = useState(false);
   const [weatherCaption, setWeatherCaption] = useState('');
+  const [userRevenue, setUserRevenue] = useState<number>(0);
   const [analytics, setAnalytics] = useState({
     totalRevenue: 0,
     activeListings: 0,
@@ -209,6 +214,29 @@ export default function Dashboard() {
     };
   }, [user, isFarmer, language]);
 
+  // Real-time listener for user revenue (totalRevenue from Firestore)
+  useEffect(() => {
+    if (!user || isMockConfig) return;
+
+    const userDocRef = doc(db, 'users', user.uid);
+    const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const revenue = Number(data.totalRevenue || 0);
+        setUserRevenue(revenue);
+        // Also update analytics.totalRevenue if it's 0 (first load)
+        setAnalytics(prev => ({
+          ...prev,
+          totalRevenue: revenue || prev.totalRevenue
+        }));
+      }
+    }, (error) => {
+      console.error('Error listening to user revenue:', error);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
   if (pageLoading && weatherLoading) {
     return (
       <div className="max-w-6xl mx-auto space-y-6">
@@ -266,14 +294,51 @@ export default function Dashboard() {
 
       <MandiTicker />
 
-      {/* Soil Moisture (Simulated IoT) */}
+      {/* Soil Moisture & Soil Test - Side by Side */}
       {isFarmer && (
-        <SoilMoistureCard
-          soilType={farmCtx?.soil}
-          season={farmCtx?.season}
-          weatherCondition={weatherCondition}
-          recentRainfall={recentRainfall}
-        />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <SoilMoistureCard
+              soilType={farmCtx?.soil}
+              season={farmCtx?.season}
+              weatherCondition={weatherCondition}
+              recentRainfall={recentRainfall}
+            />
+          </div>
+          <div className="lg:col-span-1">
+            <SoilTestCard />
+          </div>
+        </div>
+      )}
+
+      {/* Farm Credit - Premium Banner */}
+      {isFarmer && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+          className="bg-gradient-to-r from-indigo-950 to-violet-900 rounded-2xl p-6 shadow-xl"
+        >
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 bg-white/10 rounded-xl flex items-center justify-center shrink-0">
+                <Wallet className="w-7 h-7 text-white" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-white">Zero-Risk Farm Credit</h3>
+                <p className="text-white/70 text-sm">Get instant capital for your farm</p>
+              </div>
+            </div>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setIsCreditModalOpen(true)}
+              className="bg-white text-indigo-950 px-6 py-3 rounded-xl font-bold shadow-lg hover:shadow-xl transition-shadow whitespace-nowrap"
+            >
+              Apply Now
+            </motion.button>
+          </div>
+        </motion.div>
       )}
 
       {isFarmer && !farmsLoading && farms.length === 0 && (
@@ -294,7 +359,7 @@ export default function Dashboard() {
       )}
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {quickActions.map((action, i) => (
           <motion.button
             key={i}
@@ -314,22 +379,28 @@ export default function Dashboard() {
       {/* Farmer Analytics */}
       {isFarmer && !pageLoading && (
         <div className="space-y-6">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="ds-card p-4 flex flex-col justify-center border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
-              <p className="text-sm font-medium text-gray-500 mb-1">Total Revenue</p>
-              <h3 className="text-2xl font-bold text-forest-900"><AnimatedCounter value={analytics.totalRevenue} prefix="₹" /></h3>
+          {/* TrustScore + Metrics - 3 Column Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-1">
+              <TrustScoreCard />
             </div>
-            <div className="ds-card p-4 flex flex-col justify-center border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
-              <p className="text-sm font-medium text-gray-500 mb-1">Active Listings</p>
-              <h3 className="text-2xl font-bold text-forest-900"><AnimatedCounter value={analytics.activeListings} /></h3>
-            </div>
-            <div className="ds-card p-4 flex flex-col justify-center border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
-              <p className="text-sm font-medium text-gray-500 mb-1">Bids Received</p>
-              <h3 className="text-2xl font-bold text-forest-900"><AnimatedCounter value={analytics.totalBidsReceived} /></h3>
-            </div>
-            <div className="ds-card p-4 flex flex-col justify-center border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
-              <p className="text-sm font-medium text-gray-500 mb-1">Crops Sold</p>
-              <h3 className="text-2xl font-bold text-forest-900"><AnimatedCounter value={analytics.cropsSold} /></h3>
+            <div className="lg:col-span-2 grid grid-cols-2 gap-4">
+              <div className="ds-card p-4 flex flex-col justify-center border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                <p className="text-sm font-medium text-gray-500 mb-1">Total Revenue</p>
+                <h3 className="text-2xl font-bold text-forest-900"><AnimatedCounter value={analytics.totalRevenue} prefix="₹" /></h3>
+              </div>
+              <div className="ds-card p-4 flex flex-col justify-center border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                <p className="text-sm font-medium text-gray-500 mb-1">Active Listings</p>
+                <h3 className="text-2xl font-bold text-forest-900"><AnimatedCounter value={analytics.activeListings} /></h3>
+              </div>
+              <div className="ds-card p-4 flex flex-col justify-center border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                <p className="text-sm font-medium text-gray-500 mb-1">Bids Received</p>
+                <h3 className="text-2xl font-bold text-forest-900"><AnimatedCounter value={analytics.totalBidsReceived} /></h3>
+              </div>
+              <div className="ds-card p-4 flex flex-col justify-center border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                <p className="text-sm font-medium text-gray-500 mb-1">Crops Sold</p>
+                <h3 className="text-2xl font-bold text-forest-900"><AnimatedCounter value={analytics.cropsSold} /></h3>
+              </div>
             </div>
           </div>
           
@@ -373,9 +444,9 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="flex flex-col gap-6 w-full">
         {/* Weather Card */}
-        <div className="lg:col-span-2 ds-card">
+        <div className="ds-card w-full !p-5">
           <div className="flex justify-between items-center mb-6">
             <h2 className="ds-section-title flex items-center gap-2 font-devanagari">
               <Sun className="w-6 h-6 text-[#F59E0B]" /> {t('dash_weather')}
@@ -432,25 +503,26 @@ export default function Dashboard() {
 
         {/* Farm Profile */}
         {isFarmer && (
-          <div className="ds-card flex flex-col bg-white border border-gray-100">
-            <div className="flex items-center justify-between mb-4">
+          <div className="ds-card flex flex-col bg-white border border-gray-100 w-full">
+            <div className="flex items-center justify-between mb-6">
               <h2 className="ds-section-title flex items-center gap-2 text-[#1B4332] font-devanagari">
                 <MapIcon className="w-6 h-6 text-[#10B981]" /> {language === 'en' ? 'My Farms' : 'मेरे खेत'}
               </h2>
               <button 
                  onClick={() => setIsFarmFormOpen(true)} 
-                 className="text-xs font-bold text-[#1B4332] bg-[#D1FAE5] px-2 py-1 rounded-md hover:bg-[#A7F3D0]"
+                 className="text-xs font-bold text-[#1B4332] bg-[#D1FAE5] px-3 py-1.5 rounded-lg hover:bg-[#A7F3D0] transition-colors"
               >
-                + Add
+                + Add New Farm
               </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto space-y-3 pr-1 custom-scrollbar">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {farmsLoading ? (
-                 <div className="space-y-3">
+                 <>
                    <div className="skeleton h-24 w-full rounded-xl" />
                    <div className="skeleton h-24 w-full rounded-xl" />
-                 </div>
+                   <div className="skeleton h-24 w-full rounded-xl" />
+                 </>
               ) : farms.length > 0 ? (
                  farms.map(f => (
                    <div key={f.id} className="p-4 bg-white border border-gray-100 rounded-xl flex flex-col gap-3 hover:border-forest-300 transition-colors shadow-sm">
@@ -553,6 +625,7 @@ export default function Dashboard() {
         </div>
       </div>
       <FarmFormModal isOpen={isFarmFormOpen} onClose={() => setIsFarmFormOpen(false)} onSuccess={() => { setIsFarmFormOpen(false); void fetchMyFarms(); }} />
+      <CreditApplyModal isOpen={isCreditModalOpen} onClose={() => setIsCreditModalOpen(false)} />
     </motion.div>
   );
 }

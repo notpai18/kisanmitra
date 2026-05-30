@@ -1,50 +1,111 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '../contexts/LanguageContext';
-import { TrendingUp, TrendingDown } from 'lucide-react';
-import { clsx } from 'clsx';
+import { TrendingUp, TrendingDown, Loader2, AlertCircle } from 'lucide-react';
 import { formatRupee } from '../lib/formatters';
 
-const initialCrops = [
-  { name: "Wheat", nameHi: "गेहूं", price: 2100 },
-  { name: "Rice", nameHi: "चावल", price: 1950 },
-  { name: "Potato", nameHi: "आलू", price: 800 },
-  { name: "Tomato", nameHi: "टमाटर", price: 1200 },
-  { name: "Onion", nameHi: "प्याज", price: 1500 },
-  { name: "Sugarcane", nameHi: "गन्ना", price: 350 },
-  { name: "Maize", nameHi: "मक्का", price: 1750 },
-  { name: "Cotton", nameHi: "कपास", price: 6500 },
-  { name: "Soybean", nameHi: "सोयाबीन", price: 4200 },
-  { name: "Mustard", nameHi: "सरसों", price: 5100 },
-  { name: "Groundnut", nameHi: "मूंगफली", price: 5800 },
-  { name: "Turmeric", nameHi: "हल्दी", price: 12000 },
-];
+interface CommodityPrice {
+  name: string;
+  nameHi: string;
+  price: number;
+  unit: string;
+  lastUpdated: string;
+  trend?: 'up' | 'down';
+}
+
+interface PriceApiResponse {
+  success: boolean;
+  data: CommodityPrice[];
+  source?: string;
+  fetchedAt?: string;
+  error?: string;
+}
 
 export default function MandiTicker() {
   const { language } = useLanguage();
-  const [crops, setCrops] = useState(initialCrops.map(c => ({...c, trend: 'up'})));
+  const [crops, setCrops] = useState<CommodityPrice[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCrops(currentCrops => 
-        currentCrops.map(crop => {
-          // +/- 2% random variation
-          const variation = (Math.random() * 0.04 - 0.02);
-          const newPrice = Math.round(crop.price * (1 + variation));
+  const fetchPrices = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+    try {
+      const response = await fetch('/api/mandi-prices', {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status}`);
+      }
+
+      const data: PriceApiResponse = await response.json();
+
+      if (!data.success || !data.data) {
+        throw new Error(data.error || 'Failed to fetch prices');
+      }
+
+      setCrops(prevCrops => {
+        return data.data.map(crop => {
+          const prevCrop = prevCrops.find(p => p.name === crop.name);
           return {
             ...crop,
-            price: newPrice,
-            trend: newPrice >= crop.price ? 'up' : 'down'
+            trend: prevCrop ? (crop.price >= prevCrop.price ? 'up' : 'down') : 'up',
           };
-        })
-      );
-    }, 30000); // every 30 seconds
-    return () => clearInterval(interval);
+        });
+      });
+      setError(null);
+    } catch (err) {
+      clearTimeout(timeoutId);
+      console.error('Failed to fetch mandi prices:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch prices');
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchPrices();
+
+    const interval = setInterval(fetchPrices, 30000);
+    return () => clearInterval(interval);
+  }, [fetchPrices]);
+
+  if (isLoading) {
+    return (
+      <div className="w-full bg-[#1B4332] text-white overflow-hidden py-3 border-y border-[#064e3b]">
+        <div className="flex items-center justify-center gap-2 h-6">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-sm">Loading market prices...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="w-full bg-[#1B4332] text-white overflow-hidden py-3 border-y border-[#064e3b]">
+        <div className="flex items-center justify-center gap-2 h-6">
+          <AlertCircle className="w-4 h-4 text-[#EF4444]" />
+          <span className="text-sm text-[#EF4444]">Unable to load prices</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (crops.length === 0) {
+    return null;
+  }
 
   return (
     <div className="w-full bg-[#1B4332] text-white overflow-hidden py-2 border-y border-[#064e3b]">
       <div className="flex whitespace-nowrap ticker-scroll items-center h-6">
-        {/* We duplicate the array to achieve seamless infinite scrolling */}
         {[...crops, ...crops].map((crop, i) => (
           <div key={`${crop.name}-${i}`} className="inline-flex items-center gap-2 mx-6 px-4 border-r border-[#064e3b] last:border-r-0">
             <span className="font-bold font-devanagari">

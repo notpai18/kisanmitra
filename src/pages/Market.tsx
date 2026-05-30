@@ -35,6 +35,13 @@ import {
   X,
   Share2,
   Star,
+  Shield,
+  Truck,
+  Phone,
+  Sprout,
+  PackageX,
+  Search,
+  Clock3,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
@@ -48,6 +55,9 @@ import LocationSelector from '../components/LocationSelector';
 import { formatLocationLine } from '../utils/formatLocation';
 import { UP_DISTRICTS, UP_ONLY_STATE } from '../data/upDistricts';
 import MandiTicker from '../components/MandiTicker';
+import TransportModal from '../components/TransportModal';
+import LogisticsFormModal from '../components/LogisticsFormModal';
+import DeliveryConfirmModal from '../components/DeliveryConfirmModal';
 
 interface Listing {
   id: string;
@@ -64,10 +74,19 @@ interface Listing {
   description: string;
   imageUrl?: string;
   isBidding: boolean;
-  status: 'active' | 'sold' | 'archived';
+  status: 'active' | 'sold' | 'archived' | 'awaiting_logistics' | 'in_transit' | 'at_pickup' | 'heading_to_delivery' | 'at_delivery' | 'delivered';
+  transportType?: 'buyer_pickup' | 'agent_transport';
+  transportDetails?: {
+    vehicleNumber: string;
+    driverPhone: string;
+    dispatchedAt: any;
+  };
   createdAt: any;
   highestBid?: number;
   bidCount?: number;
+  isForwardContract?: boolean;
+  estimatedHarvest?: string;
+  aiHealthScore?: number;
 }
 
 interface Bid {
@@ -97,6 +116,269 @@ const MOCK_MANDI_PRICES = [
 
 const PAGE_SIZE = 10;
 
+// Framer Motion container variant for staggered animations
+const container = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.08,
+    },
+  },
+};
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 20 },
+  show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 300, damping: 25 } },
+};
+
+// Skeleton component for shimmer loading
+function SkeletonCard() {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 p-6">
+      <div className="flex justify-between items-start mb-4">
+        <div className="space-y-2">
+          <div className="h-6 w-24 bg-gray-200 rounded-lg animate-pulse" />
+          <div className="h-4 w-32 bg-gray-100 rounded animate-pulse" />
+        </div>
+        <div className="h-8 w-16 bg-gray-200 rounded-full animate-pulse" />
+      </div>
+      <div className="space-y-3 mb-4">
+        <div className="h-4 w-full bg-gray-100 rounded animate-pulse" />
+        <div className="h-4 w-3/4 bg-gray-100 rounded animate-pulse" />
+        <div className="h-4 w-1/2 bg-gray-100 rounded animate-pulse" />
+      </div>
+      <div className="h-12 w-full bg-gray-100 rounded-xl animate-pulse" />
+    </div>
+  );
+}
+
+// Premium Empty State Component
+function PremiumEmptyState({ onAddListing }: { onAddListing?: () => void }) {
+  const { language } = useLanguage();
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex flex-col items-center justify-center py-16 px-4"
+    >
+      <div className="w-24 h-24 bg-gradient-to-br from-[#D1FAE5] to-[#A7F3D0] rounded-full flex items-center justify-center mb-6">
+        <PackageX className="w-12 h-12 text-[#065f46]" />
+      </div>
+      <h3 className="text-xl font-bold text-[#111827] mb-2 font-devanagari">
+        {language === 'hi' ? 'कोई लिस्टिंग नहीं मिली' : 'No Listings Found'}
+      </h3>
+      <p className="text-[#6B7280] text-center max-w-sm mb-6 font-devanagari">
+        {language === 'hi'
+          ? 'अभी कोई फसल बिक्री के लिए उपलब्ध नहीं है। आप नई लिस्टिंग जोड़ सकते हैं।'
+          : 'No crops are currently available for sale. You can add a new listing to get started.'}
+      </p>
+      {onAddListing && (
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.97 }}
+          onClick={onAddListing}
+          className="px-6 py-3 bg-[#1B4332] text-white font-bold rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2"
+        >
+          <Plus className="w-5 h-5" />
+          {language === 'hi' ? 'नई लिस्टिंग जोड़ें' : 'Add New Listing'}
+        </motion.button>
+      )}
+    </motion.div>
+  );
+}
+
+// Premium Filter Empty State
+function NoResultsState() {
+  const { language } = useLanguage();
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex flex-col items-center justify-center py-12 px-4"
+    >
+      <Search className="w-10 h-10 text-gray-300 mb-4" />
+      <p className="text-[#6B7280] font-devanagari">
+        {language === 'hi' ? 'आपके फ़िल्टर से मेल खाने वाली कोई लिस्टिंग नहीं मिली।' : 'No listings match your filters.'}
+      </p>
+    </motion.div>
+  );
+}
+
+function InTransitCard({ listing, onConfirmDelivery, isBuyer }: { listing: Listing; onConfirmDelivery?: () => void; isBuyer?: boolean }) {
+  const { language } = useLanguage();
+  const transportDetails = listing.transportDetails;
+  const status = listing.status;
+
+  // Get status-specific message for farmer (seller)
+  const getFarmerAlert = () => {
+    switch (status) {
+      case 'in_transit':
+        return {
+          icon: Truck,
+          message: language === 'hi'
+            ? 'ट्रांसपोर्टर ने लोड स्वीकार किया'
+            : 'Transporter assigned to your load',
+          color: 'text-blue-700',
+          bg: 'bg-blue-50',
+        };
+      case 'at_pickup':
+        return {
+          icon: MapPin,
+          message: language === 'hi'
+            ? 'ट्रक आपके खेत पर पहुंच गया है!'
+            : 'Truck arrived at your farm for pickup!',
+          color: 'text-amber-700',
+          bg: 'bg-amber-50',
+        };
+      case 'heading_to_delivery':
+        return {
+          icon: Truck,
+          message: language === 'hi'
+            ? 'ट्रक रास्ते में है - खरीदार की ओर जा रहा है'
+            : 'Truck on the way to buyer',
+          color: 'text-purple-700',
+          bg: 'bg-purple-50',
+        };
+      case 'at_delivery':
+        return {
+          icon: CheckCircle2,
+          message: language === 'hi'
+            ? 'ट्रक खरीदार के गेट पर पहुंच गया है'
+            : 'Truck arrived at buyer location',
+          color: 'text-green-700',
+          bg: 'bg-green-50',
+        };
+      default:
+        return {
+          icon: Truck,
+          message: language === 'hi' ? 'रास्ते में' : 'In transit',
+          color: 'text-gray-700',
+          bg: 'bg-gray-50',
+        };
+    }
+  };
+
+  // Get status-specific message for buyer
+  const getBuyerAlert = () => {
+    switch (status) {
+      case 'in_transit':
+        return {
+          icon: Truck,
+          message: language === 'hi'
+            ? 'ट्रक रवाना हो गया है'
+            : 'Truck has departed',
+          color: 'text-blue-700',
+          bg: 'bg-blue-50',
+        };
+      case 'at_pickup':
+        return {
+          icon: Package,
+          message: language === 'hi'
+            ? 'ट्रक खेत पर है - लोड हो रहा है'
+            : 'Truck at farm - loading in progress',
+          color: 'text-amber-700',
+          bg: 'bg-amber-50',
+        };
+      case 'heading_to_delivery':
+        return {
+          icon: Truck,
+          message: language === 'hi'
+            ? 'आपकी ओर आ रहा है'
+            : 'Truck heading your way',
+          color: 'text-purple-700',
+          bg: 'bg-purple-50',
+        };
+      case 'at_delivery':
+        return {
+          icon: MapPin,
+          message: language === 'hi'
+            ? 'ट्रक आपके गेट पर पहुंच गया है!'
+            : 'Truck arrived at your destination!',
+          color: 'text-green-700',
+          bg: 'bg-green-50',
+        };
+      default:
+        return {
+          icon: Truck,
+          message: language === 'hi' ? 'रास्ते में' : 'In transit',
+          color: 'text-gray-700',
+          bg: 'bg-gray-50',
+        };
+    }
+  };
+
+  const alertInfo = isBuyer ? getBuyerAlert() : getFarmerAlert();
+  const AlertIcon = alertInfo.icon;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`rounded-2xl p-4 shadow-lg border ${alertInfo.bg}`}
+    >
+      {/* Status Alert */}
+      <div className={`flex items-center gap-2 mb-3 ${alertInfo.color}`}>
+        <AlertIcon className="w-5 h-5" />
+        <span className="font-bold">{alertInfo.message}</span>
+      </div>
+
+      {/* Transport Details (for non-platform transport) */}
+      {transportDetails && (
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-[#374151]">{language === 'hi' ? 'ट्रक नंबर:' : 'Vehicle:'}</span>
+            <span className="font-mono font-bold text-[#111827] bg-white/60 px-2 py-1 rounded">
+              {transportDetails.vehicleNumber}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[#374151]">{language === 'hi' ? 'ड्राइवर:' : 'Driver:'}</span>
+            <a
+              href={`tel:${transportDetails.driverPhone}`}
+              className="flex items-center gap-1 font-bold text-[#1B4332] hover:underline"
+            >
+              <Phone className="w-3 h-3" />
+              {transportDetails.driverPhone}
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* Platform Transport Info */}
+      {listing.requiresPlatformTransport && listing.transporterId && (
+        <div className="text-sm text-gray-600 mt-2">
+          {language === 'hi' ? 'प्लेटफॉर्म ट्रांसपोर्ट' : 'Platform Transport'}
+        </div>
+      )}
+
+      {/* Delivery Confirmation Button - Only when at_delivery */}
+      {isBuyer && onConfirmDelivery && status === 'at_delivery' && (
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={onConfirmDelivery}
+          className="w-full mt-3 py-2.5 rounded-xl font-bold text-white bg-[#1B4332] shadow-md flex items-center justify-center gap-2"
+        >
+          <CheckCircle2 className="w-4 h-4" />
+          {language === 'hi' ? 'डिलीवरी पुष्टि करें' : 'Confirm Delivery'}
+        </motion.button>
+      )}
+
+      {/* Waiting message for buyers not yet at delivery */}
+      {isBuyer && onConfirmDelivery && status !== 'at_delivery' && (
+        <div className="mt-3 py-2 px-3 rounded-lg bg-amber-50 text-amber-700 text-sm font-medium text-center">
+          {language === 'hi'
+            ? 'ट्रक पहुंचने पर बटन सक्षम होगा'
+            : 'Button will be enabled when truck arrives'}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 function buildWhatsappUrl(listing: Listing): string {
   const loc = formatLocationLine(listing.district, listing.state);
   const shareText = `🌾 ${listing.crop} बिक्री के लिए उपलब्ध\nमात्रा: ${listing.quantity} ${listing.unit}\nकीमत: ${formatRupee(listing.price)}/${listing.unit}\nस्थान: ${loc}\nKisanMitra पर देखें`;
@@ -114,108 +396,157 @@ type ListingCardProps = {
 const ListingCard = memo(function ListingCard({ listing, isFarmer, onPlaceBid, onArchiveListing, hasBid }: ListingCardProps) {
   const { items, addToCart, removeFromCart, updateQuantity } = useCart();
   const { language } = useLanguage();
-  
+
   const share = () => {
     window.open(buildWhatsappUrl(listing), '_blank', 'noopener,noreferrer');
   };
 
+  // Status badge with premium styling
+  const getStatusBadge = () => {
+    const statusConfig: Record<string, { bg: string; text: string; label: string }> = {
+      active: { bg: 'bg-[#D1FAE5]', text: 'text-[#065f46]', label: language === 'hi' ? 'सक्रिय' : 'Active' },
+      sold: { bg: 'bg-purple-100', text: 'text-purple-700', label: language === 'hi' ? 'बिक गया' : 'Sold' },
+      awaiting_logistics: { bg: 'bg-blue-100', text: 'text-blue-700', label: language === 'hi' ? 'लॉजिस्टिक्स का इंतज़ार' : 'Awaiting Logistics' },
+      in_transit: { bg: 'bg-blue-100', text: 'text-blue-700', label: language === 'hi' ? 'रास्ते में' : 'En Route' },
+      at_pickup: { bg: 'bg-amber-100', text: 'text-amber-700', label: language === 'hi' ? 'पिकअप पर' : 'At Pickup' },
+      heading_to_delivery: { bg: 'bg-purple-100', text: 'text-purple-700', label: language === 'hi' ? 'डिलीवरी की ओर' : 'Heading to Delivery' },
+      at_delivery: { bg: 'bg-green-100', text: 'text-green-700', label: language === 'hi' ? 'डिलीवरी पर' : 'At Delivery' },
+      delivered: { bg: 'bg-[#D1FAE5]', text: 'text-[#065f46]', label: language === 'hi' ? 'डिलीवर' : 'Delivered' },
+    };
+    const config = statusConfig[listing.status] || statusConfig.active;
+    return (
+      <span className={clsx('px-3 py-1.5 rounded-full text-xs font-bold', config.bg, config.text)}>
+        {config.label}
+      </span>
+    );
+  };
+
   return (
-    <div className="ds-card p-4 md:p-6 overflow-hidden flex flex-col hover:shadow-[0_8px_32px_rgba(0,0,0,0.1)] transition-shadow w-full">
+    <motion.div
+      variants={cardVariants}
+      whileHover={{ y: -4, boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)' }}
+      transition={{ duration: 0.2 }}
+      className="bg-white rounded-2xl border border-gray-100 p-4 md:p-6 overflow-hidden flex flex-col w-full shadow-sm hover:shadow-lg"
+    >
       <div className="flex justify-between items-start gap-2 mb-4">
         <div className="min-w-0">
-          <h3 className="ds-card-title text-[#111827]">{listing.crop}</h3>
-          <p className="ds-caption flex items-center gap-1 mt-1 font-devanagari">
+          <h3 className="text-xl font-bold text-[#111827]">{listing.crop}</h3>
+          <p className="text-sm text-[#6B7280] flex items-center gap-1 mt-1 font-devanagari">
             <MapPin className="w-4 h-4 shrink-0" /> {formatLocationLine(listing.district, listing.state)}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0">
-          <span
-            className={clsx(
-              'px-2 py-1 rounded-full text-xs font-bold uppercase',
-              listing.status === 'active' ? 'bg-[#D1FAE5] text-[#065f46]' : 'bg-gray-100 text-gray-800'
-            )}
-          >
-            {listing.status}
-          </span>
-          <button
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={listing.status}
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              transition={{ duration: 0.15 }}
+            >
+              {getStatusBadge()}
+            </motion.div>
+          </AnimatePresence>
+          <motion.button
             type="button"
+            whileTap={{ scale: 0.9 }}
             onClick={share}
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full border border-[#1B4332]/20 text-[#1B4332] hover:bg-[#D1FAE5]"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full border border-[#1B4332]/20 text-[#1B4332] hover:bg-[#D1FAE5] transition-colors"
             aria-label="Share on WhatsApp"
           >
             <Share2 className="w-5 h-5" />
-          </button>
+          </motion.button>
         </div>
       </div>
 
-      <div className="space-y-2 mb-4">
+      <div className="space-y-3 mb-4">
         <div className="flex justify-between text-sm gap-2">
           <span className="text-[#6B7280] flex items-center gap-1">
-            <Scale className="w-4 h-4 shrink-0" /> Quantity
+            <Scale className="w-4 h-4 shrink-0" /> {language === 'hi' ? 'मात्रा' : 'Quantity'}
           </span>
-          <span className="font-medium font-devanagari">
+          <span className="font-semibold text-[#111827] font-devanagari">
             {listing.quantity} {listing.unit}
           </span>
         </div>
         <div className="flex justify-between text-sm gap-2">
           <span className="text-[#6B7280] flex items-center gap-1">
-            <IndianRupee className="w-4 h-4 shrink-0" /> Price
+            <IndianRupee className="w-4 h-4 shrink-0" /> {language === 'hi' ? 'कीमत' : 'Price'}
           </span>
-          <span className="font-medium">
+          <span className="font-bold text-lg text-[#1B4332]">
             {formatRupee(listing.price)}/{listing.unit}
           </span>
         </div>
         <div className="flex justify-between text-sm gap-2">
           <span className="text-[#6B7280] flex items-center gap-1">
-            <CheckCircle2 className="w-4 h-4 shrink-0" /> Quality
+            <CheckCircle2 className="w-4 h-4 shrink-0" /> {language === 'hi' ? 'गुणवत्ता' : 'Quality'}
           </span>
           <span
             className={clsx(
-              'font-bold px-2 py-0.5 rounded text-xs',
+              'font-bold px-2.5 py-1 rounded-lg text-xs',
               listing.grade === 'A' ? 'bg-[#D1FAE5] text-[#065f46]' : listing.grade === 'B' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'
             )}
           >
-            Grade {listing.grade}
+            {language === 'hi' ? 'ग्रेड' : 'Grade'} {listing.grade}
           </span>
         </div>
       </div>
 
       {listing.isBidding && listing.highestBid != null && (
-        <div className="bg-[#FEF3C7] text-[#92400e] p-2 rounded-xl text-sm flex justify-between items-center mb-2">
-          <span className="font-medium">Highest Bid:</span>
-          <span className="font-bold">
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-gradient-to-r from-[#FEF3C7] to-[#FDE68A] text-[#92400e] p-3 rounded-xl text-sm flex justify-between items-center mb-3"
+        >
+          <span className="font-semibold">{language === 'hi' ? 'उच्चतम बोली:' : 'Highest Bid:'}</span>
+          <span className="font-bold text-lg">
             {formatRupee(listing.highestBid)}/{listing.unit}
           </span>
-        </div>
+        </motion.div>
       )}
 
       {!isFarmer && listing.status === 'active' && (
-        <div className="mt-auto pt-2 border-t border-gray-100 h-14 flex items-center justify-center">
+        <div className="mt-auto pt-3 border-t border-gray-100 h-16 flex items-center justify-center">
           {listing.isBidding ? (
-            <button
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.97 }}
               type="button"
               onClick={() => onPlaceBid(listing)}
-              className={clsx("w-full h-full justify-center text-sm py-3 rounded-xl font-bold transition-all", hasBid ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : "btn-primary")}
+              className={clsx("w-full h-full justify-center text-sm py-3 rounded-xl font-bold transition-all", hasBid ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : "bg-[#1B4332] text-white hover:bg-[#153326]")}
             >
-              {hasBid ? 'Bid Again' : 'Place Bid'}
-            </button>
+              {hasBid ? (language === 'hi' ? 'फिर से बोली लगाएं' : 'Bid Again') : (language === 'hi' ? 'बोली लगाएं' : 'Place Bid')}
+            </motion.button>
           ) : (
             (() => {
               const cartItem = items.find((item) => item.id === listing.id);
               const count = cartItem ? cartItem.quantity : 0;
-              
+
               if (count > 0) {
                 return (
-                  <div className="flex items-center justify-between bg-forest-50 border border-forest-200 rounded-xl px-4 py-2 w-full h-full">
-                    <button onClick={() => count === 1 ? removeFromCart(listing.id) : updateQuantity(listing.id, count - 1)} className="text-forest-600 font-bold p-1 w-8 hover:bg-forest-100 rounded flex items-center justify-center transition-colors">−</button>
-                    <span className="font-bold text-forest-900 text-center text-lg">{count}</span>
-                    <button onClick={() => updateQuantity(listing.id, count + 1)} className="text-forest-600 font-bold p-1 w-8 hover:bg-forest-100 rounded flex items-center justify-center transition-colors">+</button>
+                  <div className="flex items-center justify-between bg-[#D1FAE5] border border-[#A7F3D0] rounded-xl px-4 py-2 w-full h-full">
+                    <motion.button
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => count === 1 ? removeFromCart(listing.id) : updateQuantity(listing.id, count - 1)}
+                      className="text-[#065f46] font-bold p-1 w-8 hover:bg-[#A7F3D0] rounded flex items-center justify-center transition-colors"
+                    >
+                      −
+                    </motion.button>
+                    <span className="font-bold text-[#065f46] text-center text-lg">{count}</span>
+                    <motion.button
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => updateQuantity(listing.id, count + 1)}
+                      className="text-[#065f46] font-bold p-1 w-8 hover:bg-[#A7F3D0] rounded flex items-center justify-center transition-colors"
+                    >
+                      +
+                    </motion.button>
                   </div>
                 );
               }
-              
+
               return (
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
                   type="button"
                   onClick={() => {
                     addToCart({
@@ -224,12 +555,12 @@ const ListingCard = memo(function ListingCard({ listing, isFarmer, onPlaceBid, o
                       price: listing.price,
                       category: 'Market'
                     });
-                    toast.success('Added to Cart');
+                    toast.success(language === 'hi' ? 'कार्ट में जोड़ा गया' : 'Added to Cart');
                   }}
-                  className="bg-forest-600 hover:bg-forest-700 text-white w-full h-full justify-center text-sm py-3 rounded-xl font-bold transition-colors"
+                  className="bg-[#1B4332] hover:bg-[#153326] text-white w-full h-full justify-center text-sm py-3 rounded-xl font-bold transition-colors"
                 >
-                  Buy Now
-                </button>
+                  {language === 'hi' ? 'अभी खरीदें' : 'Buy Now'}
+                </motion.button>
               );
             })()
           )}
@@ -237,21 +568,150 @@ const ListingCard = memo(function ListingCard({ listing, isFarmer, onPlaceBid, o
       )}
 
       {isFarmer && (listing.status === 'sold' || listing.status === 'active') && (
-         <div className="mt-auto pt-2 border-t border-gray-100">
-          <button
+         <div className="mt-auto pt-3 border-t border-gray-100">
+          <motion.button
+            whileTap={{ scale: 0.95 }}
             type="button"
             onClick={() => {
-              if (window.confirm('Are you sure you want to archive this listing?')) {
+              if (window.confirm(language === 'hi' ? 'क्या आप वाकई इस लिस्टिंग को संग्रहित करना चाहते हैं?' : 'Are you sure you want to archive this listing?')) {
                 onArchiveListing?.(listing.id);
               }
             }}
-            className="w-full text-center text-sm font-bold text-gray-500 py-3 hover:text-red-500 transition-colors"
+            className="w-full text-center text-sm font-semibold text-gray-400 py-3 hover:text-red-500 transition-colors"
           >
-            {listing.status === 'sold' ? 'Clear Completed Listing' : 'Archive Listing'}
-          </button>
+            {listing.status === 'sold' ? (language === 'hi' ? 'पूर्ण लिस्टिंग हटाएं' : 'Clear Completed') : (language === 'hi' ? 'लिस्टिंग संग्रहित करें' : 'Archive Listing')}
+          </motion.button>
          </div>
       )}
-    </div>
+    </motion.div>
+  );
+});
+
+const ForwardContractCard = memo(function ForwardContractCard({ listing, isFarmer, onPlaceBid, hasBid }: { listing: Listing; isFarmer: boolean; onPlaceBid: (l: Listing) => void; hasBid?: boolean }) {
+  const { items, addToCart, removeFromCart, updateQuantity } = useCart();
+  const { language } = useLanguage();
+
+  const getHealthStatus = () => {
+    const score = listing.aiHealthScore || 85;
+    if (score >= 80) return { label: language === 'hi' ? 'स्वस्थ' : 'Healthy', color: 'text-emerald-600', bg: 'bg-emerald-100' };
+    if (score >= 60) return { label: language === 'hi' ? 'ठीक है' : 'Fair', color: 'text-amber-600', bg: 'bg-amber-100' };
+    return { label: language === 'hi' ? 'जोखिम' : 'At Risk', color: 'text-red-600', bg: 'bg-red-100' };
+  };
+
+  const healthStatus = getHealthStatus();
+
+  return (
+    <motion.div
+      variants={cardVariants}
+      whileHover={{ y: -4, boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)' }}
+      transition={{ duration: 0.2 }}
+      className="bg-gradient-to-br from-fuchsia-50 to-purple-50 rounded-2xl border border-fuchsia-200 p-4 md:p-6 overflow-hidden flex flex-col w-full shadow-sm hover:shadow-lg"
+    >
+      <div className="flex justify-between items-start gap-2 mb-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <h3 className="text-xl font-bold text-[#111827]">{listing.crop}</h3>
+            <span className="px-2.5 py-1 bg-fuchsia-100 text-fuchsia-700 text-xs font-bold rounded-full">
+              {language === 'hi' ? 'प्री-हार्वेस्ट लॉक-इन' : 'Pre-Harvest Lock-in'}
+            </span>
+          </div>
+          <p className="text-sm text-[#6B7280] flex items-center gap-1 mt-1 font-devanagari">
+            <MapPin className="w-4 h-4 shrink-0" /> {formatLocationLine(listing.district, listing.state)}
+          </p>
+        </div>
+        <span className="px-3 py-1.5 rounded-full text-xs font-bold bg-fuchsia-100 text-fuchsia-700">
+          {language === 'hi' ? 'फॉरवर्ड' : 'Forward'}
+        </span>
+      </div>
+
+      <div className="space-y-3 mb-4">
+        <div className="flex justify-between text-sm gap-2">
+          <span className="text-[#6B7280] flex items-center gap-1">
+            <Scale className="w-4 h-4 shrink-0" /> {language === 'hi' ? 'मात्रा' : 'Quantity'}
+          </span>
+          <span className="font-semibold text-[#111827] font-devanagari">
+            {listing.quantity} {listing.unit}
+          </span>
+        </div>
+        <div className="flex justify-between text-sm gap-2">
+          <span className="text-[#6B7280] flex items-center gap-1">
+            <IndianRupee className="w-4 h-4 shrink-0" /> {language === 'hi' ? 'लॉक-इन कीमत' : 'Locked Price'}
+          </span>
+          <span className="font-bold text-lg text-[#7C3AED]">
+            {formatRupee(listing.price)}/{listing.unit}
+          </span>
+        </div>
+        <div className="flex justify-between text-sm gap-2">
+          <span className="text-[#6B7280] flex items-center gap-1">
+            <Calendar className="w-4 h-4 shrink-0" /> {language === 'hi' ? 'अनुमानित कटाई' : 'Est. Harvest'}
+          </span>
+          <span className="font-semibold text-[#111827] font-devanagari">
+            {listing.estimatedHarvest ? new Date(listing.estimatedHarvest).toLocaleDateString('hi-IN') : listing.harvestDate}
+          </span>
+        </div>
+        <div className="flex justify-between text-sm gap-2">
+          <span className="text-[#6B7280] flex items-center gap-1">
+            <CheckCircle2 className="w-4 h-4 shrink-0" /> {language === 'hi' ? 'AI स्वास्थ्य' : 'AI Health'}
+          </span>
+          <span className={clsx('font-bold px-2.5 py-1 rounded-lg text-xs', healthStatus.bg, healthStatus.color)}>
+            {listing.aiHealthScore || 92}% - {healthStatus.label}
+          </span>
+        </div>
+      </div>
+
+      {!isFarmer && listing.status === 'active' && (
+        <div className="mt-auto pt-3 border-t border-fuchsia-200 h-16 flex items-center justify-center">
+          {(listing.isBidding || true) && (
+            (() => {
+              const cartItem = items.find((item) => item.id === listing.id);
+              const count = cartItem ? cartItem.quantity : 0;
+
+              if (count > 0) {
+                return (
+                  <div className="flex items-center justify-between bg-fuchsia-100 border border-fuchsia-200 rounded-xl px-4 py-2 w-full h-full">
+                    <motion.button
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => count === 1 ? removeFromCart(listing.id) : updateQuantity(listing.id, count - 1)}
+                      className="text-fuchsia-700 font-bold p-1 w-8 hover:bg-fuchsia-200 rounded flex items-center justify-center transition-colors"
+                    >
+                      −
+                    </motion.button>
+                    <span className="font-bold text-fuchsia-700 text-center text-lg">{count}</span>
+                    <motion.button
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => updateQuantity(listing.id, count + 1)}
+                      className="text-fuchsia-700 font-bold p-1 w-8 hover:bg-fuchsia-200 rounded flex items-center justify-center transition-colors"
+                    >
+                      +
+                    </motion.button>
+                  </div>
+                );
+              }
+
+              return (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
+                  type="button"
+                  onClick={() => {
+                    addToCart({
+                      id: listing.id,
+                      name: listing.crop,
+                      price: listing.price,
+                      category: 'Market'
+                    });
+                    toast.success(language === 'hi' ? 'कार्ट में जोड़ा गया' : 'Added to Cart');
+                  }}
+                  className="bg-gradient-to-r from-[#7C3AED] to-[#A855F7] hover:from-[#6D28D9] hover:to-[#9333EA] text-white w-full h-full justify-center text-sm py-3 rounded-xl font-bold transition-colors"
+                >
+                  {language === 'hi' ? 'अनुबंध बुक करें' : 'Book Contract'}
+                </motion.button>
+              );
+            })()
+          )}
+        </div>
+      )}
+    </motion.div>
   );
 });
 
@@ -348,13 +808,21 @@ const useMarketFilters = (listings: Listing[], initialDistrict: string = "") => 
 };
 
 export default function Market() {
-  const { user, userData } = useAuth();
+  const { user, userData, currentFarmerId } = useAuth();
+  const isVillageAgent = userData?.role === 'village_agent';
   const { t, language } = useLanguage();
-  const isFarmerOrSeller = userData?.role === 'farmer' || userData?.role === 'seller';
+  const isFarmerOrSeller = userData?.role === 'farmer' || userData?.role === 'seller' || userData?.role === 'village_agent';
+
+  // For village agent: use currentFarmerId if selected, else use agent's own ID
+  const effectiveFarmerId = user ? (isVillageAgent ? (currentFarmerId || user.uid) : user.uid) : '';
 
   const [activeTab, setActiveTab] = useState<'market' | 'my_listings' | 'bids'>('market');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showBidModal, setShowBidModal] = useState<Listing | null>(null);
+  const [showTransportModal, setShowTransportModal] = useState<Listing | null>(null);
+  const [showLogisticsFormModal, setShowLogisticsFormModal] = useState<Listing | null>(null);
+  const [showDeliveryConfirmModal, setShowDeliveryConfirmModal] = useState<Listing | null>(null);
+  const [showForwardContracts, setShowForwardContracts] = useState(false);
 
   const [listings, setListings] = useState<Listing[]>([]);
   const { 
@@ -414,7 +882,7 @@ export default function Market() {
             id: 'mock-1', farmerId: 'mock-uid', farmerName: 'Ramesh Singh', crop: 'Wheat',
             quantity: 50, unit: 'quintal', grade: 'A', price: 2150, harvestDate: '2023-10-10',
             district: 'Varanasi', state: 'Uttar Pradesh', description: 'Good quality wheat',
-            isBidding: true, status: 'active', createdAt: new Date().toISOString()
+            isBidding: true, status: 'active', createdAt: new Date().toISOString(), isForwardContract: true, estimatedHarvest: '2026-06-15', aiHealthScore: 92
           },
           {
             id: 'mock-2', farmerId: 'other-uid', farmerName: 'Suresh Kumar', crop: 'Tomato',
@@ -433,10 +901,20 @@ export default function Market() {
     setListingsError(null);
     try {
       const constraints: QueryConstraint[] = [];
-      
+
       if (activeTab === 'my_listings' || (activeTab === 'bids' && isFarmerOrSeller)) {
         constraints.push(where('farmerId', '==', user.uid));
       } else {
+        // Buyers need to see listings they've won bids on (sold, awaiting_logistics, in_transit, delivered)
+        if (!isFarmerOrSeller) {
+          // Fetch all non-archived listings so buyers can see their won bids
+          const qListAll = query(collection(db, 'listings'));
+          const snap = await getDocs(qListAll);
+          let data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          setListings(data.filter((l: any) => l.status !== 'archived') as Listing[]);
+          setHasMore(false);
+          return;
+        }
         constraints.push(where('status', '==', 'active'));
       }
       
@@ -550,8 +1028,11 @@ export default function Market() {
     }
 
     try {
-      await addDoc(collection(db, 'listings'), {
-        farmerId: user.uid,
+      if (!user) return;
+      // For village agent: record both agentId and the farmer they're acting on behalf of
+      const farmerId = isVillageAgent ? (currentFarmerId || user.uid) : user.uid;
+      const listingData: any = {
+        farmerId,
         farmerName: userData.name || 'Farmer',
         crop: newListing.crop,
         quantity: Number(newListing.quantity),
@@ -567,7 +1048,15 @@ export default function Market() {
         highestBid: 0,
         bidCount: 0,
         createdAt: serverTimestamp(),
-      });
+      };
+
+      // Add agent tracking if village agent is creating the listing
+      if (isVillageAgent) {
+        listingData.agentId = user.uid;
+        listingData.actedAsAgent = true;
+      }
+
+      await addDoc(collection(db, 'listings'), listingData);
       setShowAddModal(false);
       toast.success('Listing published');
       fetchListings();
@@ -795,7 +1284,7 @@ export default function Market() {
   };
 
   return (
-    <div className="w-full space-y-6 overflow-x-hidden pb-12">
+    <div className="w-full space-y-6 overflow-x-hidden pb-12 bg-gray-50 min-h-screen">
       <MandiTicker />
       <div className="max-w-6xl mx-auto space-y-6 px-4 sm:px-6 lg:px-8">
       <div className="flex flex-col lg:flex-row gap-6">
@@ -913,6 +1402,19 @@ export default function Market() {
                     <option value="B">Grade B</option>
                     <option value="C">Grade C</option>
                   </select>
+                  <button
+                    type="button"
+                    onClick={() => setShowForwardContracts(!showForwardContracts)}
+                    className={clsx(
+                      'flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border transition-all min-h-[44px]',
+                      showForwardContracts
+                        ? 'bg-fuchsia-50 border-fuchsia-300 text-fuchsia-700'
+                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300'
+                    )}
+                  >
+                    <Clock3 className="w-4 h-4" />
+                    {language === 'en' ? 'Forward Contracts' : 'फॉरवर्ड कॉन्ट्रैक्ट'}
+                  </button>
                 </div>
               </div>
 
@@ -950,53 +1452,80 @@ export default function Market() {
             </div>
 
             {listingsLoading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="skeleton h-64 w-full rounded-2xl" />
+              <motion.div
+                variants={container}
+                initial="hidden"
+                animate="show"
+                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+              >
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <SkeletonCard key={i} />
                 ))}
-              </div>
+              </motion.div>
             ) : listingsError ? (
-              <div className="ds-card text-center border border-[#EF4444]/20 bg-red-50">
-                <p className="text-[#EF4444] mb-2">⚠️</p>
-                <p className="font-devanagari text-[#111827] mb-1">{UI.errorTitleHi}</p>
-                <p className="ds-caption mb-4">{UI.errorTitleEn}</p>
-                <button type="button" className="btn-primary" onClick={retryListings}>
-                  {UI.tryAgainHi} / {UI.tryAgainEn}
-                </button>
-              </div>
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white border border-[#EF4444]/20 rounded-2xl p-8 text-center"
+              >
+                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <XCircle className="w-8 h-8 text-[#EF4444]" />
+                </div>
+                <p className="font-devanagari text-[#111827] text-lg mb-2">{UI.errorTitleHi}</p>
+                <p className="text-[#6B7280] mb-6">{UI.errorTitleEn}</p>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
+                  type="button"
+                  className="px-6 py-3 bg-[#1B4332] text-white font-bold rounded-xl"
+                  onClick={retryListings}
+                >
+                  {language === 'hi' ? 'पुनः प्रयास करें' : 'Try Again'}
+                </motion.button>
+              </motion.div>
             ) : listings.length === 0 ? (
-              <div className="ds-card text-center border border-dashed border-gray-200">
-                <Store className="w-14 h-14 text-[#D1FAE5] mx-auto mb-4" />
-                <p className="ds-section-title font-devanagari text-[#111827]">{UI.marketEmptyHi}</p>
-                <p className="ds-caption mb-6">{UI.marketEmptyEn}</p>
-                {isFarmerOrSeller && (
-                  <button type="button" className="btn-secondary" onClick={() => setShowAddModal(true)}>
-                    {UI.addFirstListing}
-                  </button>
-                )}
-              </div>
+              <PremiumEmptyState onAddListing={isFarmerOrSeller ? () => setShowAddModal(true) : undefined} />
             ) : (
               <>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <motion.div
+                  variants={container}
+                  initial="hidden"
+                  animate="show"
+                  className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+                >
                   {filtered.map((listing) => (
-                    <ListingCard key={listing.id} listing={listing} isFarmer={user?.uid === listing.farmerId} onPlaceBid={openBidModal} onArchiveListing={handleArchiveListing} hasBid={!isFarmerOrSeller && bids.some(b => b.listingId === listing.id)} />
+                    listing.isForwardContract ? (
+                      <ForwardContractCard
+                        key={listing.id}
+                        listing={listing}
+                        isFarmer={user?.uid === listing.farmerId}
+                        onPlaceBid={openBidModal}
+                        hasBid={!isFarmerOrSeller && bids.some(b => b.listingId === listing.id)}
+                      />
+                    ) : (
+                      <ListingCard
+                        key={listing.id}
+                        listing={listing}
+                        isFarmer={user?.uid === listing.farmerId}
+                        onPlaceBid={openBidModal}
+                        onArchiveListing={handleArchiveListing}
+                        hasBid={!isFarmerOrSeller && bids.some(b => b.listingId === listing.id)}
+                      />
+                    )
                   ))}
-                </div>
-                {filtered.length === 0 && (
-                  <div className="text-center py-12 text-gray-500 font-devanagari">
-                    {language === 'en' ? 'No listings found matching your filters.' : 'आपके फ़िल्टर से मेल खाने वाली कोई लिस्टिंग नहीं मिली।'}
-                  </div>
-                )}
+                </motion.div>
+                {filtered.length === 0 && <NoResultsState />}
                 {hasMore && (
                   <div className="flex justify-center pt-4">
-                    <button
+                    <motion.button
+                      whileTap={{ scale: 0.95 }}
                       type="button"
-                      className="btn-ghost"
+                      className="px-6 py-3 text-[#1B4332] font-semibold hover:bg-[#D1FAE5] rounded-xl transition-colors"
                       disabled={loadingMore}
                       onClick={loadMoreListings}
                     >
-                      {loadingMore ? 'Loading…' : 'Load More'}
-                    </button>
+                      {loadingMore ? (language === 'hi' ? 'लोड हो रहा है...' : 'Loading...') : (language === 'hi' ? 'और लोड करें' : 'Load More')}
+                    </motion.button>
                   </div>
                 )}
               </>
@@ -1005,7 +1534,7 @@ export default function Market() {
         )}
 
         {activeTab === 'bids' && (
-          <div className="ds-card overflow-hidden p-0">
+          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
             {bidsLoading ? (
               <div className="p-6 space-y-4">
                 <div className="skeleton h-24 w-full" />
@@ -1014,38 +1543,54 @@ export default function Market() {
             ) : bidsError ? (
               <div className="p-8 text-center text-[#EF4444]">⚠️ {bidsError}</div>
             ) : (isFarmerOrSeller ? farmerBids : bids).length === 0 ? (
-              <div className="text-center py-12 px-4">
-                <Clock className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <h3 className="ds-card-title">No bids yet</h3>
-                <p className="ds-caption">When bids are placed, they will appear here.</p>
-              </div>
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-center py-16 px-4"
+              >
+                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Clock className="w-10 h-10 text-gray-400" />
+                </div>
+                <h3 className="text-xl font-bold text-[#111827] mb-2">{language === 'hi' ? 'अभी कोई बोली नहीं' : 'No Bids Yet'}</h3>
+                <p className="text-[#6B7280]">{language === 'hi' ? 'जब बोलियां आएंगी, वे यहां दिखाई देंगी।' : 'When bids are placed, they will appear here.'}</p>
+              </motion.div>
             ) : (
               <div className="divide-y divide-gray-100">
                 {(isFarmerOrSeller ? farmerBids : bids).map((bid) => {
                   const listing = listings.find((l) => l.id === bid.listingId);
                   return (
-                    <div
+                    <motion.div
                       key={bid.id}
-                      className="p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-[#F9FAFB]"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-[#F9FAFB] transition-colors"
                     >
                       <div>
-                        <div className="flex items-center gap-3 mb-1 flex-wrap">
+                        <div className="flex items-center gap-3 mb-2 flex-wrap">
                           <h3 className="font-bold text-lg text-[#111827]">{listing?.crop || bid.crop || 'Unknown Crop'}</h3>
-                          <span
-                            className={clsx(
-                              'px-2.5 py-0.5 rounded-full text-xs font-bold uppercase',
-                              bid.status === 'pending'
-                                ? 'bg-amber-100 text-amber-800'
-                                : bid.status === 'accepted'
-                                  ? 'bg-[#D1FAE5] text-[#065f46]'
-                                  : 'bg-red-100 text-red-800'
-                            )}
-                          >
-                            {bid.status}
-                          </span>
+                          <AnimatePresence mode="wait">
+                            <motion.span
+                              key={bid.status}
+                              initial={{ opacity: 0, scale: 0.8 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.8 }}
+                              className={clsx(
+                                'px-3 py-1 rounded-full text-xs font-bold',
+                                bid.status === 'pending'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : bid.status === 'accepted'
+                                    ? 'bg-[#D1FAE5] text-[#065f46]'
+                                    : 'bg-red-100 text-red-800'
+                              )}
+                            >
+                              {bid.status === 'pending' ? (language === 'hi' ? 'लंबित' : 'Pending') :
+                               bid.status === 'accepted' ? (language === 'hi' ? 'स्वीकृत' : 'Accepted') :
+                               (language === 'hi' ? 'अस्वीकृत' : 'Declined')}
+                            </motion.span>
+                          </AnimatePresence>
                         </div>
-                        <p className="text-sm text-[#6B7280] mb-2">
-                          {isFarmerOrSeller ? `Bid from ${bid.buyerName}` : `Bid on ${listing?.farmerName}'s listing`}
+                        <p className="text-sm text-[#6B7280] mb-3 font-devanagari">
+                          {isFarmerOrSeller ? `${bid.buyerName} से बोली` : `${listing?.farmerName} की लिस्टिंग पर बोली`}
                         </p>
                         <div className="flex flex-wrap gap-4 text-sm">
                           <span className="flex items-center gap-1 text-[#6B7280]">
@@ -1066,45 +1611,116 @@ export default function Market() {
                           </div>
                         )}
                       </div>
-                      {isFarmerOrSeller && bid.status === 'pending' && (
-                        <div className="flex gap-2 w-full justify-end sm:w-auto mt-3 md:mt-0 items-center shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleAcceptBid(bid)}
-                            className="min-h-[44px] px-4 rounded-full bg-[#10B981] text-white font-semibold flex items-center gap-1"
-                          >
-                            <CheckCircle2 className="w-4 h-4" /> Accept
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeclineBid(bid.id, bid.buyerId, bid.amount, bid.listingId)}
-                            className="min-h-[44px] px-4 rounded-full border border-[#EF4444] text-[#EF4444] font-semibold flex items-center gap-1"
-                          >
-                            <XCircle className="w-4 h-4" /> Decline
-                          </button>
+                      {isFarmerOrSeller && listing && bid.status === 'accepted' && (
+                        <div className="flex flex-col gap-2 mt-2">
+                          {listing.status === 'awaiting_logistics' && listing.transportType === 'agent_transport' && (
+                            <motion.button
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.97 }}
+                              onClick={() => setShowLogisticsFormModal(listing)}
+                              className="px-4 py-3 rounded-xl font-bold text-white bg-[#1B4332] shadow-lg flex items-center justify-center gap-2"
+                            >
+                              <Truck className="w-4 h-4" />
+                              {language === 'hi' ? 'ट्रक भेजें' : 'Dispatch Truck'}
+                            </motion.button>
+                          )}
+                          {listing.status === 'awaiting_logistics' && listing.transportType === 'buyer_pickup' && (
+                            <div className="text-sm text-amber-700 bg-amber-50 px-3 py-2 rounded-lg font-medium">
+                              {language === 'hi' ? 'खरीदार के ट्रक का इंतज़ार है।' : "Awaiting buyer's truck."}
+                            </div>
+                          )}
+                          {['in_transit', 'at_pickup', 'heading_to_delivery', 'at_delivery'].includes(listing.status) && (
+                            <InTransitCard listing={listing} isBuyer={false} />
+                          )}
+                          {listing.status === 'delivered' && (
+                            <motion.div
+                              initial={{ opacity: 0, scale: 0.9 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="px-4 py-2 rounded-xl bg-[#D1FAE5] text-[#065f46] font-bold text-sm flex items-center gap-2"
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                              {language === 'hi' ? 'डिलीवर हो चुका' : 'Delivered'}
+                            </motion.div>
+                          )}
+                          {listing.status === 'awaiting_logistics' && !listing.transportType && (
+                            <div className="text-xs text-gray-500 font-devanagari">
+                              {language === 'hi' ? 'खरीदार ट्रांसपोर्ट चुन रहा है...' : 'Buyer selecting transport...'}
+                            </div>
+                          )}
                         </div>
                       )}
-                      
-                      {!isFarmerOrSeller && bid.status === 'accepted' && (
-                        <div className="flex gap-4 mt-3 md:mt-0 w-full justify-end sm:w-auto shrink-0 border-l pl-4 border-gray-100 items-center">
-                          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-[#D1FAE5] text-[#065f46]">
-                            Won! ✓
-                          </span>
-                          {listing && <RatingWidget bid={bid} listing={listing} />}
-                          <button onClick={() => handleArchiveBid(bid.id)} className="text-gray-400 hover:text-red-500 font-bold text-sm">
-                            Clear
-                          </button>
+                      {isFarmerOrSeller && bid.status === 'pending' && (
+                        <div className="flex gap-2 w-full justify-end sm:w-auto mt-3 md:mt-0 items-center shrink-0">
+                          <motion.button
+                            whileTap={{ scale: 0.95 }}
+                            type="button"
+                            onClick={() => handleAcceptBid(bid)}
+                            className="min-h-[44px] px-5 rounded-full bg-[#10B981] text-white font-semibold flex items-center gap-2 hover:bg-[#059669] transition-colors"
+                          >
+                            <CheckCircle2 className="w-4 h-4" /> {language === 'hi' ? 'स्वीकृत करें' : 'Accept'}
+                          </motion.button>
+                          <motion.button
+                            whileTap={{ scale: 0.95 }}
+                            type="button"
+                            onClick={() => handleDeclineBid(bid.id, bid.buyerId, bid.amount, bid.listingId)}
+                            className="min-h-[44px] px-5 rounded-full border border-[#EF4444] text-[#EF4444] font-semibold flex items-center gap-2 hover:bg-red-50 transition-colors"
+                          >
+                            <XCircle className="w-4 h-4" /> {language === 'hi' ? 'अस्वीकृत करें' : 'Decline'}
+                          </motion.button>
+                        </div>
+                      )}
+
+                      {!isFarmerOrSeller && bid.status === 'accepted' && listing && (
+                        <div className="flex flex-col gap-3 mt-3 md:mt-0 w-full sm:w-auto shrink-0">
+                          {['active', 'sold', 'awaiting_logistics'].includes(listing.status) && !listing.transportType && (
+                            <motion.button
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.97 }}
+                              onClick={() => setShowTransportModal(listing)}
+                              className="px-5 py-3 rounded-xl font-bold text-white bg-gradient-to-r from-[#10B981] to-[#059669] shadow-lg flex items-center justify-center gap-2"
+                            >
+                              <Shield className="w-4 h-4" />
+                              {language === 'hi' ? 'फंड सिक्योर करें' : 'Secure Funds'}
+                            </motion.button>
+                          )}
+                          {listing.status === 'awaiting_logistics' && listing.transportType && (
+                            <div className="text-sm text-amber-700 bg-amber-50 px-3 py-2 rounded-lg font-medium">
+                              {listing.transportType === 'buyer_pickup'
+                                ? (language === 'hi' ? 'खरीदार के ट्रक का इंतज़ार है...' : "Awaiting buyer's truck...")
+                                : (language === 'hi' ? 'एजेंट डिस्पैच का इंतज़ार है...' : 'Awaiting agent dispatch...')}
+                            </div>
+                          )}
+                          {['in_transit', 'at_pickup', 'heading_to_delivery', 'at_delivery'].includes(listing.status) && (
+                            <InTransitCard listing={listing} onConfirmDelivery={() => setShowDeliveryConfirmModal(listing)} isBuyer={true} />
+                          )}
+                          {listing.status === 'delivered' && (
+                            <motion.div
+                              initial={{ opacity: 0, scale: 0.9 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="px-4 py-2 rounded-xl bg-[#D1FAE5] text-[#065f46] font-bold text-sm flex items-center gap-2"
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                              {language === 'hi' ? 'डिलीवर हो चुका' : 'Delivered'}
+                            </motion.div>
+                          )}
+                          {listing.status === 'sold' && !listing.transportType && (
+                            <div className="text-xs text-gray-500 font-devanagari">
+                              {language === 'hi' ? 'फंड सिक्योर करने के लिए बटन दबाएं' : 'Click above to secure funds'}
+                            </div>
+                          )}
                         </div>
                       )}
 
                       {!isFarmerOrSeller && bid.status === 'declined' && (
                          <div className="flex gap-2 mt-3 md:mt-0 w-full justify-end sm:w-auto shrink-0 border-l pl-4 border-gray-100">
-                           <button onClick={() => handleArchiveBid(bid.id)} className="text-gray-400 hover:text-red-500 font-bold text-sm">
-                             Clear
-                           </button>
+                           <motion.button
+                             whileTap={{ scale: 0.95 }}
+                             onClick={() => handleArchiveBid(bid.id)} className="text-gray-400 hover:text-red-500 font-semibold text-sm px-3 py-2 rounded-lg hover:bg-red-50 transition-colors">
+                             {language === 'hi' ? 'हटाएं' : 'Clear'}
+                           </motion.button>
                          </div>
                       )}
-                    </div>
+                    </motion.div>
                   );
                 })}
               </div>
@@ -1115,18 +1731,29 @@ export default function Market() {
 
       <AnimatePresence>
         {showAddModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          >
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto border border-gray-100"
             >
-               <div className="sticky top-0 bg-white border-b border-gray-100 p-6 flex justify-between items-center z-10">
-                <h2 className="text-xl font-bold text-[#111827]">Add New Listing</h2>
-                <button type="button" onClick={() => setShowAddModal(false)} className="min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-gray-100 rounded-full">
+               <div className="sticky top-0 bg-white border-b border-gray-100 p-6 flex justify-between items-center z-10 rounded-t-2xl">
+                <h2 className="text-xl font-bold text-[#111827]">{language === 'hi' ? 'नई लिस्टिंग जोड़ें' : 'Add New Listing'}</h2>
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-gray-100 rounded-full"
+                >
                   <X className="w-6 h-6 text-[#6B7280]" />
-                </button>
+                </motion.button>
               </div>
               <form onSubmit={handleAddListing} className="p-6 space-y-6">
                 
@@ -1255,75 +1882,96 @@ export default function Market() {
                   />
                 </div>
                 <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-                  <button type="button" onClick={() => setShowAddModal(false)} className="btn-ghost">
-                    Cancel
-                  </button>
-                  <button type="submit" className="btn-primary">
-                    Publish Listing
-                  </button>
+                  <motion.button
+                    whileTap={{ scale: 0.95 }}
+                    type="button"
+                    onClick={() => setShowAddModal(false)}
+                    className="px-6 py-3 rounded-xl font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors min-h-[44px]"
+                  >
+                    {language === 'hi' ? 'रद्द करें' : 'Cancel'}
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.97 }}
+                    type="submit"
+                    className="px-6 py-3 rounded-xl font-bold text-white bg-[#1B4332] hover:bg-[#153326] shadow-lg transition-all min-h-[44px]"
+                  >
+                    {language === 'hi' ? 'लिस्टिंग प्रकाशित करें' : 'Publish Listing'}
+                  </motion.button>
                 </div>
               </form>
             </motion.div>
-          </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
         {showBidModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          >
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl shadow-xl w-full max-w-md"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-gray-100"
             >
-              <div className="p-6 border-b border-gray-100 flex justify-between items-start">
+              <div className="p-6 border-b border-gray-100 flex justify-between items-start rounded-t-2xl">
                 <div>
-                  <h2 className="text-xl font-bold text-[#111827]">Place a Bid</h2>
-                  <p className="text-sm text-[#6B7280] mt-1">
-                    {showBidModal.crop} from {showBidModal.farmerName}
+                  <h2 className="text-xl font-bold text-[#111827]">{language === 'hi' ? 'बोली लगाएं' : 'Place a Bid'}</h2>
+                  <p className="text-sm text-[#6B7280] mt-1 font-devanagari">
+                    {showBidModal.crop} - {showBidModal.farmerName}
                   </p>
                 </div>
-                <button type="button" onClick={() => setShowBidModal(null)} className="min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-gray-100 rounded-full">
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  type="button"
+                  onClick={() => setShowBidModal(null)}
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center hover:bg-gray-100 rounded-full"
+                >
                   <X className="w-5 h-5 text-[#6B7280]" />
-                </button>
+                </motion.button>
               </div>
               <form onSubmit={handlePlaceBid} className="p-6 space-y-5">
-                <div className="bg-[#F9FAFB] p-4 rounded-xl border border-gray-100 text-sm space-y-2">
+                <div className="bg-gradient-to-br from-[#F9FAFB] to-[#F3F4F6] p-4 rounded-xl border border-gray-100 text-sm space-y-3">
                   <div className="flex justify-between">
-                    <span className="text-[#6B7280]">Available:</span>
-                    <span className="font-medium">
+                    <span className="text-[#6B7280]">{language === 'hi' ? 'उपलब्ध:' : 'Available:'}</span>
+                    <span className="font-semibold text-[#111827] font-devanagari">
                       {showBidModal.quantity} {showBidModal.unit}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-[#6B7280]">Asking Price:</span>
-                    <span className="font-medium">
+                    <span className="text-[#6B7280]">{language === 'hi' ? 'मांग कीमत:' : 'Asking Price:'}</span>
+                    <span className="font-semibold text-[#111827]">
                       {formatRupee(showBidModal.price)}/{showBidModal.unit}
                     </span>
                   </div>
                   {showBidModal.highestBid != null && (
-                    <div className="flex justify-between text-[#92400e] font-medium">
-                      <span>Highest Bid:</span>
-                      <span>
+                    <div className="flex justify-between text-[#92400e] font-semibold bg-[#FEF3C7]/50 p-2 rounded-lg">
+                      <span>{language === 'hi' ? 'उच्चतम बोली:' : 'Highest Bid:'}</span>
+                      <span className="font-bold">
                         {formatRupee(showBidModal.highestBid)}/{showBidModal.unit}
                       </span>
                     </div>
                   )}
                 </div>
                 <div>
-                  <label className="ds-caption block mb-2">Your bid (₹ per {showBidModal.unit})</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">{language === 'hi' ? `आपकी बोली (₹ प्रति ${showBidModal.unit})` : `Your bid (₹ per ${showBidModal.unit})`}</label>
                   <input
                     type="number"
                     required
                     min={showBidModal.highestBid ? showBidModal.highestBid + 1 : 1}
                     value={newBid.amount}
                     onChange={(e) => setNewBid({ ...newBid, amount: Number(e.target.value) })}
-                    className="w-full rounded-xl border border-gray-200 p-3 text-lg font-bold min-h-[44px]"
+                    className="w-full rounded-xl border border-gray-200 p-3 text-lg font-bold min-h-[44px] focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 focus:border-[#1B4332] transition-all"
                   />
                 </div>
                 <div>
-                  <label className="ds-caption block mb-2">Quantity ({showBidModal.unit})</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">{language === 'hi' ? `मात्रा (${showBidModal.unit})` : `Quantity (${showBidModal.unit})`}</label>
                   <input
                     type="number"
                     required
@@ -1331,24 +1979,72 @@ export default function Market() {
                     max={showBidModal.quantity}
                     value={newBid.quantity}
                     onChange={(e) => setNewBid({ ...newBid, quantity: Number(e.target.value) })}
-                    className="w-full rounded-xl border border-gray-200 p-3 min-h-[44px]"
+                    className="w-full rounded-xl border border-gray-200 p-3 min-h-[44px] focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 focus:border-[#1B4332] transition-all"
                   />
                 </div>
                 <div>
-                  <label className="ds-caption block mb-2">Message (Optional)</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">{language === 'hi' ? 'संदेश (वैकल्पिक)' : 'Message (Optional)'}</label>
                   <textarea
                     rows={2}
                     value={newBid.message}
                     onChange={(e) => setNewBid({ ...newBid, message: e.target.value })}
-                    className="w-full rounded-xl border border-gray-200 p-3"
+                    className="w-full rounded-xl border border-gray-200 p-3 focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 focus:border-[#1B4332] transition-all"
                   />
                 </div>
-                <button type="submit" className="btn-primary w-full justify-center text-base py-3">
-                  Submit Bid
-                </button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
+                  type="submit"
+                  className="w-full justify-center text-base py-4 rounded-xl font-bold text-white bg-[#1B4332] hover:bg-[#153326] shadow-lg transition-all min-h-[48px]"
+                >
+                  {language === 'hi' ? 'बोली सबमिट करें' : 'Submit Bid'}
+                </motion.button>
               </form>
             </motion.div>
-          </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showTransportModal && (
+          <TransportModal
+            isOpen={!!showTransportModal}
+            onClose={() => setShowTransportModal(null)}
+            listing={showTransportModal}
+            onSuccess={() => {
+              setShowTransportModal(null);
+              fetchListings();
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showLogisticsFormModal && (
+          <LogisticsFormModal
+            isOpen={!!showLogisticsFormModal}
+            onClose={() => setShowLogisticsFormModal(null)}
+            listing={showLogisticsFormModal}
+            transportType={showLogisticsFormModal.transportType || 'agent_transport'}
+            onSuccess={() => {
+              setShowLogisticsFormModal(null);
+              fetchListings();
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showDeliveryConfirmModal && (
+          <DeliveryConfirmModal
+            isOpen={!!showDeliveryConfirmModal}
+            onClose={() => setShowDeliveryConfirmModal(null)}
+            listing={showDeliveryConfirmModal}
+            onSuccess={() => {
+              setShowDeliveryConfirmModal(null);
+              fetchListings();
+            }}
+          />
         )}
       </AnimatePresence>
       </div>
